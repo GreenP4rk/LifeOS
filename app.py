@@ -7,56 +7,10 @@ from datetime import datetime
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
 
-# --- 2. KONFIGURACJA AI ---
-@st.cache_resource
-def init_genai():
-    try:
-        api_key = st.secrets["GEMINI_KEY"]
-    except:
-        api_key = "TWOJ_KLUCZ_LOKALNY"
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('models/gemini-2.5-flash')
-
-model = init_genai()
-
-def get_calories_from_ai(ingredient_name, weight_g):
-    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
-    try:
-        response = model.generate_content(prompt)
-        return float(response.text.strip())
-    except Exception as e:
-        st.error(f"Błąd AI: {e}")
-        return 0.0
-
-# --- 3. BAZA DANYCH (Zoptymalizowane połączenie) ---
-@st.cache_resource
-def init_db_engine():
-    try:
-        db_url = st.secrets["DB_URL"]
-    except Exception:
-        db_url = 'sqlite:///lifeos_core.db'
-
-    if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
-        if db_url.startswith("postgresql://"):
-            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
-        
-        return create_engine(
-            db_url,
-            connect_args={
-                "sslmode": "require",
-                "connect_timeout": 10,
-                "options": "-c statement_timeout=30000"
-            },
-            pool_pre_ping=True,
-            pool_recycle=300
-        )
-    return create_engine(db_url)
-
-engine = init_db_engine()
+# --- 2. BAZA DANYCH - MODELE ---
+# Modele muszą być zdefiniowane przed inicjalizacją połączenia
 Base = declarative_base()
-SessionLocal = sessionmaker(bind=engine)
 
-# --- 4. MODELE ---
 class MealBatch(Base):
     __tablename__ = 'meal_batches'
     id = Column(Integer, primary_key=True)
@@ -94,9 +48,83 @@ class Settings(Base):
     key = Column(String, unique=True)
     value = Column(Float)
 
-# Base.metadata.create_all(engine)
+# --- 3. BAZA DANYCH - POŁĄCZENIE (KESHOWANE) ---
+@st.cache_resource
+def init_db_engine():
+    try:
+        db_url = st.secrets["DB_URL"]
+    except Exception:
+        db_url = 'sqlite:///lifeos_core.db'
 
-# --- 5. FUNKCJE POMOCNICZE ---
+    if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
+        
+        return create_engine(
+            db_url,
+            connect_args={
+                "sslmode": "require",
+                "connect_timeout": 10,
+                "options": "-c statement_timeout=30000"
+            },
+            pool_pre_ping=True,
+            pool_recycle=300
+        )
+    return create_engine(db_url)
+
+engine = init_db_engine()
+SessionLocal = sessionmaker(bind=engine)
+
+# --- 4. KONFIGURACJA AI (KESHOWANA) ---
+@st.cache_resource
+def init_genai():
+    try:
+        api_key = st.secrets["GEMINI_KEY"]
+    except:
+        api_key = "TWOJ_KLUCZ_LOKALNY"
+    genai.configure(api_key=api_key)
+    return genai.GenerativeModel('models/gemini-2.5-flash')
+
+model = init_genai()
+
+def get_calories_from_ai(ingredient_name, weight_g):
+    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
+    try:
+        response = model.generate_content(prompt)
+        return float(response.text.strip())
+    except Exception as e:
+        st.error(f"Błąd AI: {e}")
+        return 0.0
+
+# --- 5. FUNKCJE POMOCNICZE I OPTYMALIZACJA ZAPYTAŃ ---
+@st.cache_data(ttl=300) # Pamięta dane przez 5 minut (300 sekund)
+def get_dashboard_data():
+    db = SessionLocal()
+    today = datetime.now().date()
+    
+    today_meals = db.query(MealLog).filter(MealLog.date >= today).all()
+    today_activity = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
+    
+    total_kcal_eaten = sum(m.calories for m in today_meals)
+    total_kcal_burned = sum(a.calories_burned for a in today_activity)
+    total_batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
+    
+    total_val_res = db.query(MealBatch).all()
+    total_value = sum(b.total_price for b in total_val_res if b.total_price)
+    
+    last_workout = db.query(WorkoutSet).order_by(WorkoutSet.date.desc()).first()
+    last_workout_weight = last_workout.weight if last_workout else None
+    
+    db.close()
+    
+    return {
+        "eaten": total_kcal_eaten,
+        "burned": total_kcal_burned,
+        "batches_count": total_batches,
+        "batches_value": total_value,
+        "last_workout_weight": last_workout_weight
+    }
+
 def get_daily_limit():
     db = SessionLocal()
     setting = db.query(Settings).filter_by(key="daily_limit").first()
@@ -113,21 +141,6 @@ def set_daily_limit(new_limit):
     db.commit()
     db.close()
 
-@st.cache_data(ttl=300)  # Pamiętaj dane przez 5 minut
-def get_dashboard_data():
-    db = SessionLocal()
-    today = datetime.now().date()
-    today_meals = db.query(MealLog).filter(MealLog.date >= today).all()
-    today_activity = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
-    
-    data = {
-        "eaten": sum(m.calories for m in today_meals),
-        "burned": sum(a.calories_burned for a in today_activity),
-        "batches_count": db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
-    }
-    db.close()
-    return data
-
 # --- 6. NAWIGACJA (SIDEBAR) ---
 st.sidebar.title("🧭 Menu LifeOS")
 choice = st.sidebar.radio("Przejdź do:", 
@@ -143,33 +156,54 @@ if st.sidebar.button("💾 Zapisz limit"):
     st.sidebar.success("Zapisano!")
     st.rerun()
 
+st.sidebar.markdown("---")
+# Ukryty przycisk serwisowy - używaj tylko jeśli dodasz nowe tabele do kodu
+if st.sidebar.button("🛠️ Serwis: Wymuś strukturę bazy", help="Utworzy tabele, jeśli ich brakuje"):
+    Base.metadata.create_all(engine)
+    st.sidebar.success("Struktura sprawdzona!")
+
 # --- 7. GŁÓWNA LOGIKA APLIKACJI ---
 
 if choice == "🏠 Dashboard":
     st.title("🚀 LifeOS: Dashboard")
     
-    # Dane pobieramy TYLKO tutaj
-    db = SessionLocal()
-    today = datetime.now().date()
+    col_title, col_btn = st.columns([4, 1])
+    with col_btn:
+        if st.button("🔄 Odśwież dane"):
+            get_dashboard_data.clear() # Czyści cache i zmusza do pobrania nowych danych
+            st.rerun()
+    
+    # Pobieranie danych z CACHE (Błyskawiczne!)
     dash_data = get_dashboard_data()
-    total_kcal_eaten = dash_data["eaten"]
-    total_kcal_burned = dash_data["burned"]
-    total_batches = dash_data["batches_count"]
-    db.close()
-
-    remaining_kcal = current_saved_limit - total_kcal_eaten
+    remaining_kcal = current_saved_limit - dash_data["eaten"]
+    balance = dash_data["eaten"] - dash_data["burned"]
     
     # Metryki
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Zjedzone", f"{total_kcal_eaten:.0f} kcal")
-    m2.metric("Spalone", f"{total_kcal_burned:.0f} kcal")
-    m3.metric("Pozostało", f"{remaining_kcal:.0f} kcal")
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    with col1:
+        st.metric("Zjedzone dzisiaj", f"{dash_data['eaten']:.0f} kcal", f"Limit: {current_saved_limit}")
+    with col2:
+        st.metric("Bilans netto", f"{balance:.0f} kcal", delta_color="inverse")
+    with col3:
+        st.metric("Pozostało kcal", f"{remaining_kcal:.0f} kcal")
+    with col4:
+        st.metric("Spalone (spacer)", f"{dash_data['burned']:.0f} kcal")
+    with col5:
+        st.metric("W zamrażarce", f"{dash_data['batches_count']} potraw", f"{dash_data['batches_value']:.2f} zł")
+    with col6:
+        if dash_data['last_workout_weight']:
+            st.metric("Ostatni trening", f"{dash_data['last_workout_weight']} kg", "Progres!")
+        else:
+            st.metric("Ostatni trening", "Brak", "Zacznij!")
 
     # Pasek postępu
-    st.subheader("📊 Postęp limitu")
-    progress = min(total_kcal_eaten / current_saved_limit, 1.0)
+    st.subheader("📊 Postęp dziennego limitu")
+    progress = min(dash_data["eaten"] / current_saved_limit, 1.0)
     st.progress(progress)
-    st.write(f"Zużycie: {progress*100:.1f}% limitu ({current_saved_limit} kcal)")
+    st.write(f"Wykorzystałeś **{progress*100:.1f}%** swojego limitu ({dash_data['eaten']:.0f} / {current_saved_limit:.0f} kcal)")
+
+    if dash_data["eaten"] > current_saved_limit:
+        st.warning(f"⚠️ Przekroczyłeś limit o {dash_data['eaten'] - current_saved_limit:.0f} kcal!")
 
 elif choice == "🍳 Nowy Posiłek":
     st.header("🍳 Rejestracja Posiłku")
@@ -181,7 +215,7 @@ elif choice == "🍳 Nowy Posiłek":
 
         col_in, col_list = st.columns(2)
         with col_in:
-            ing_name = st.text_input("Składnik")
+            ing_name = st.text_input("Składnik (np. łosoś z airfryera)")
             ing_weight = st.number_input("Waga (g)", min_value=0.0)
             if st.button("Dodaj składnik"):
                 with st.spinner('AI liczy...'):
@@ -200,6 +234,7 @@ elif choice == "🍳 Nowy Posiłek":
                 db.add(MealLog(calories=total_kcal))
                 db.commit()
                 db.close()
+                get_dashboard_data.clear() # Czyścimy cache, żeby dashboard zobaczył nowy posiłek
                 st.session_state.current_ingredients = []
                 st.success("Zapisano!")
                 st.rerun()
@@ -220,6 +255,7 @@ elif choice == "🍳 Nowy Posiłek":
                 target.current_weight_g -= weight
                 db.commit()
                 db.close()
+                get_dashboard_data.clear() # Odświeżenie dashboardu
                 st.success(f"Dodano {kcal:.0f} kcal")
                 st.rerun()
         else:
@@ -251,6 +287,7 @@ elif choice == "➕ Dodaj Batch":
             db.add(MealBatch(name=b_name, original_weight_g=total_w, current_weight_g=total_w, total_calories=total_k))
             db.commit()
             db.close()
+            get_dashboard_data.clear() # Odświeżenie dashboardu
             st.session_state.batch_ingredients = []
             st.success("Zapisano!")
 
@@ -264,6 +301,7 @@ elif choice == "📦 Zamrażarka":
             if st.button(f"Wyrzuć {b.id}", key=f"del_{b.id}"):
                 b.current_weight_g = 0
                 db.commit()
+                get_dashboard_data.clear()
                 st.rerun()
     db.close()
 
@@ -276,6 +314,7 @@ elif choice == "👟 Aktywność":
         db.add(ActivityLog(steps=steps, calories_burned=burned))
         db.commit()
         db.close()
+        get_dashboard_data.clear()
         st.success(f"Spalono {burned:.0f} kcal!")
 
 elif choice == "💪 Trening":
