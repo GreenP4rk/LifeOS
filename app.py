@@ -25,19 +25,45 @@ def get_calories_from_ai(ingredient_name, weight_g):
         st.error(f"Błąd AI: {e}")
         return 0.0
 
-# --- BAZA DANYCH (To jest okolica linii 43) ---
+# --- BAZA DANYCH ---
+db_url = ""
 try:
-    DB_URL = st.secrets["DB_URL"]
-except Exception:
-    DB_URL = 'sqlite:///lifeos_core.db'
+    db_url = st.secrets["DB_URL"]
+except:
+    db_url = 'sqlite:///lifeos_core.db'
 
-# Poprawka formatu dla SQLAlchemy (Supabase używa postgresql://)
-if DB_URL.startswith("postgresql://"):
-    DB_URL = DB_URL.replace("postgresql://", "postgresql+psycopg2://")
+# Konfiguracja dla Postgres (Supabase)
+if db_url.startswith("postgresql://"):
+    # SQLAlchemy wymaga 'postgresql+psycopg2'
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
+    
+    # Supabase WYMAGA SSL. Dodajemy parametry łączności.
+    connect_args = {"sslmode": "require"}
+    engine = create_engine(
+        db_url, 
+        connect_args=connect_args,
+        pool_pre_ping=True, # Sprawdza czy połączenie żyje przed użyciem
+        pool_recycle=300    # Odświeża połączenie co 5 min
+    )
+else:
+    # Dla lokalnego SQLite
+    engine = create_engine(db_url)
 
-engine = create_engine(DB_URL, pool_pre_ping=True)
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine)
+
+# TEST POŁĄCZENIA - Wyświetli błąd bezpośrednio w aplikacji jeśli nie zadziała
+try:
+    with engine.connect() as conn:
+        pass
+    # Jeśli przejdzie tutaj, znaczy że połączenie działa
+except Exception as e:
+    st.error("🚨 Problem z bazą danych!")
+    st.info("Sprawdź czy hasło w Secrets nie zawiera znaków specjalnych i czy baza w Supabase jest aktywna.")
+    st.stop() # Zatrzymaj aplikację, żeby nie sypała tracebackiem
+
+# Tworzenie tabel
+Base.metadata.create_all(engine)
 
 class MealBatch(Base):
     __tablename__ = 'meal_batches'
