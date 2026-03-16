@@ -8,7 +8,14 @@ from datetime import datetime
 st.set_page_config(page_title="LifeOS", layout="wide")
 
 # --- KONFIGURACJA AI ---
-genai.configure(api_key="AIzaSyCO8GtlcwzQtqY4kng7CaI4raSE173uU8o")
+# Zamiast wpisywać klucz tutaj, bierzemy go z "bezpiecznego schowka" Streamlit
+try:
+    api_key = st.secrets["GEMINI_KEY"]
+except:
+    # To pozwoli Ci nadal uruchamiać kod lokalnie na komputerze
+    api_key = "TWÓJ_KLUCZ_API_DO_TESTÓW_LOKALNYCH"
+
+genai.configure(api_key=api_key)
 model = genai.GenerativeModel('models/gemini-2.5-flash')
 
 def get_calories_from_ai(ingredient_name, weight_g):
