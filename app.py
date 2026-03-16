@@ -94,7 +94,7 @@ class Settings(Base):
     key = Column(String, unique=True)
     value = Column(Float)
 
-Base.metadata.create_all(engine)
+# Base.metadata.create_all(engine)
 
 # --- 5. FUNKCJE POMOCNICZE ---
 def get_daily_limit():
@@ -112,6 +112,21 @@ def set_daily_limit(new_limit):
         db.add(Settings(key="daily_limit", value=new_limit))
     db.commit()
     db.close()
+
+@st.cache_data(ttl=300)  # Pamiętaj dane przez 5 minut
+def get_dashboard_data():
+    db = SessionLocal()
+    today = datetime.now().date()
+    today_meals = db.query(MealLog).filter(MealLog.date >= today).all()
+    today_activity = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
+    
+    data = {
+        "eaten": sum(m.calories for m in today_meals),
+        "burned": sum(a.calories_burned for a in today_activity),
+        "batches_count": db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
+    }
+    db.close()
+    return data
 
 # --- 6. NAWIGACJA (SIDEBAR) ---
 st.sidebar.title("🧭 Menu LifeOS")
@@ -136,13 +151,10 @@ if choice == "🏠 Dashboard":
     # Dane pobieramy TYLKO tutaj
     db = SessionLocal()
     today = datetime.now().date()
-    today_meals = db.query(MealLog).filter(MealLog.date >= today).all()
-    today_activity = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
-    
-    total_kcal_eaten = sum(m.calories for m in today_meals)
-    total_kcal_burned = sum(a.calories_burned for a in today_activity)
-    total_batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
-    last_workout = db.query(WorkoutSet).order_by(WorkoutSet.date.desc()).first()
+    dash_data = get_dashboard_data()
+    total_kcal_eaten = dash_data["eaten"]
+    total_kcal_burned = dash_data["burned"]
+    total_batches = dash_data["batches_count"]
     db.close()
 
     remaining_kcal = current_saved_limit - total_kcal_eaten
