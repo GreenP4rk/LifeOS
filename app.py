@@ -40,6 +40,11 @@ if DB_URL.startswith("postgresql://"):
 # Dodajemy pool_pre_ping (sprawdza połączenie przed użyciem) 
 # oraz connect_args, aby uniknąć problemów z timeoutem
 engine = create_engine(
+    try:
+    with engine.connect() as connection:
+        st.write("✅ Połączono z bazą danych!")
+except Exception as e:
+    st.error(f"❌ Problem z bazą: {str(e)}")
     DB_URL, 
     pool_pre_ping=True,
     pool_recycle=3600
