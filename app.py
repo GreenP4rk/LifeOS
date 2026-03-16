@@ -31,6 +31,7 @@ try:
     db_url = st.secrets["DB_URL"]
 except:
     db_url = 'sqlite:///lifeos_core.db'
+    
 
 # Konfiguracja dla Postgres (Supabase)
 if db_url.startswith("postgresql://"):
@@ -40,11 +41,20 @@ if db_url.startswith("postgresql://"):
     # Supabase WYMAGA SSL. Dodajemy parametry łączności.
     connect_args = {"sslmode": "require"}
     engine = create_engine(
+        
         db_url, 
         connect_args=connect_args,
         pool_pre_ping=True, # Sprawdza czy połączenie żyje przed użyciem
         pool_recycle=300    # Odświeża połączenie co 5 min
     )
+    # --- DIAGNOSTYKA (Wklej to pod engine = create_engine(...)) ---
+try:
+    with engine.connect() as connection:
+        st.sidebar.success("✅ Baza danych połączona!")
+except Exception as e:
+    st.error("🚨 Szczegóły błędu bazy:")
+    st.code(str(e)) # To pokaże nam prawdziwy powód błędu na ekranie iPhone'a/komputera
+    st.stop()
 else:
     # Dla lokalnego SQLite
     engine = create_engine(db_url)
