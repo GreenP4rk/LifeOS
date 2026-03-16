@@ -69,6 +69,12 @@ class MealLog(Base):
     id = Column(Integer, primary_key=True)
     date = Column(DateTime, default=datetime.now)
     calories = Column(Float)
+    
+class Settings(Base):
+    __tablename__ = 'settings'
+    id = Column(Integer, primary_key=True)
+    key = Column(String, unique=True)
+    value = Column(Float)
 
 Base.metadata.create_all(engine)
 
@@ -79,12 +85,47 @@ def calculate_walking_calories(steps):
 def calories_to_steps(calories):
     return int(calories * 25)
 
+def get_daily_limit():
+    db = SessionLocal()
+    setting = db.query(Settings).filter_by(key="daily_limit").first()
+    db.close()
+    return setting.value if setting else 2500.0  # 2500 to wartość domyślna
+
+def set_daily_limit(new_limit):
+    db = SessionLocal()
+    setting = db.query(Settings).filter_by(key="daily_limit").first()
+    if setting:
+        setting.value = new_limit
+    else:
+        db.add(Settings(key="daily_limit", value=new_limit))
+    db.commit()
+    db.close()
+
 # --- NAWIGACJA ---
 st.sidebar.title("🧭 Menu LifeOS")
 choice = st.sidebar.radio("Przejdź do:", 
     ["🏠 Dashboard", "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność", "💪 Trening"])
 st.sidebar.markdown("---")
-daily_limit = st.sidebar.number_input("Twój dzienny limit kcal", value=2500, step=100)
+st.sidebar.subheader("⚙️ Ustawienia Limitów")
+
+# Pobieramy aktualny limit z bazy danych
+current_saved_limit = get_daily_limit()
+
+# Pole do wpisania nowego limitu
+new_limit_input = st.sidebar.number_input(
+    "Dzienny limit kcal", 
+    value=float(current_saved_limit), 
+    step=50.0
+)
+
+# Przycisk zapisu
+if st.sidebar.button("💾 Zapisz nowy limit"):
+    set_daily_limit(new_limit_input)
+    st.sidebar.success(f"Zapisano: {new_limit_input:.0f} kcal")
+    st.rerun()
+
+# Używamy tej zmiennej w całej reszcie aplikacji
+daily_limit = current_saved_limit
 
 # --- LOGIKA DANYCH ---
 db = SessionLocal()
