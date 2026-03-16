@@ -35,7 +35,7 @@ if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
     if db_url.startswith("postgresql://"):
         db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
     
-    # Pooler w Supabase wymaga tych konkretnych ustawień
+    # Pooler w Supabase bez problematycznego parametru
     engine = create_engine(
         db_url,
         connect_args={
@@ -44,9 +44,7 @@ if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
             "options": "-c statement_timeout=30000"
         },
         pool_pre_ping=True,
-        pool_recycle=300,
-        # To wyłącza przygotowywanie zapytań, które gryzie się z Poolerem
-        executemany_mode='values'
+        pool_recycle=300
     )
 else:
     engine = create_engine(db_url)
