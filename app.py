@@ -29,7 +29,18 @@ def get_calories_from_ai(ingredient_name, weight_g):
         return 0.0
 
 # --- BAZA DANYCH ---
-engine = create_engine('sqlite:///lifeos_core.db', echo=False)
+# Pobieramy URL bazy z Secrets (Streamlit Cloud) lub używamy lokalnej do testów
+try:
+    DB_URL = st.secrets["DB_URL"]
+except:
+    # Jeśli testujesz lokalnie i nie masz DB_URL, stworzy plik .db
+    DB_URL = 'sqlite:///lifeos_core.db'
+
+# Jeśli używasz Supabase (Postgres), SQLAlchemy potrzebuje sterownika w URL
+if DB_URL.startswith("postgresql://"):
+    DB_URL = DB_URL.replace("postgresql://", "postgresql+psycopg2://")
+
+engine = create_engine(DB_URL)
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine)
 
