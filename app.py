@@ -31,19 +31,22 @@ try:
 except:
     db_url = 'sqlite:///lifeos_core.db'
 
-if db_url.startswith("postgresql://"):
-    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
+if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
     
-    # Parametry podawane oddzielnie, żeby sterownik nie wyrzucał błędów
-    connect_args = {
-        "sslmode": "require",
-        "connect_timeout": 10
-    }
+    # Pooler w Supabase wymaga tych konkretnych ustawień
     engine = create_engine(
-        db_url, 
-        connect_args=connect_args,
+        db_url,
+        connect_args={
+            "sslmode": "require",
+            "connect_timeout": 10,
+            "options": "-c statement_timeout=30000"
+        },
         pool_pre_ping=True,
-        pool_recycle=300
+        pool_recycle=300,
+        # To wyłącza przygotowywanie zapytań, które gryzie się z Poolerem
+        executemany_mode='values'
     )
 else:
     engine = create_engine(db_url)
@@ -51,17 +54,15 @@ else:
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine)
 
-# TEST POŁĄCZENIA Z DIAGNOSTYKĄ
+# TEST POŁĄCZENIA
 try:
     with engine.connect() as conn:
-        # Jeśli tutaj wejdzie, to znaczy, że działa!
         pass
 except Exception as e:
-    st.error("🚨 Problem z połączeniem:")
+    st.error("🚨 Problem z Poolerem Supabase:")
     st.code(str(e))
     st.stop()
 
-# Tworzenie tabel
 Base.metadata.create_all(engine)
 
 class MealBatch(Base):
