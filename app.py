@@ -26,51 +26,40 @@ def get_calories_from_ai(ingredient_name, weight_g):
         return 0.0
 
 # --- BAZA DANYCH ---
-db_url = ""
 try:
     db_url = st.secrets["DB_URL"]
 except:
     db_url = 'sqlite:///lifeos_core.db'
-    
 
-# Konfiguracja dla Postgres (Supabase)
 if db_url.startswith("postgresql://"):
-    # SQLAlchemy wymaga 'postgresql+psycopg2'
     db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
     
-    # Supabase WYMAGA SSL. Dodajemy parametry łączności.
-    connect_args = {"sslmode": "require"}
+    # Parametry podawane oddzielnie, żeby sterownik nie wyrzucał błędów
+    connect_args = {
+        "sslmode": "require",
+        "connect_timeout": 10
+    }
     engine = create_engine(
-        
         db_url, 
         connect_args=connect_args,
-        pool_pre_ping=True, # Sprawdza czy połączenie żyje przed użyciem
-        pool_recycle=300    # Odświeża połączenie co 5 min
+        pool_pre_ping=True,
+        pool_recycle=300
     )
-    # --- DIAGNOSTYKA (Wklej to pod engine = create_engine(...)) ---
-try:
-    with engine.connect() as connection:
-        st.sidebar.success("✅ Baza danych połączona!")
-except Exception as e:
-    st.error("🚨 Szczegóły błędu bazy:")
-    st.code(str(e)) # To pokaże nam prawdziwy powód błędu na ekranie iPhone'a/komputera
-    st.stop()
 else:
-    # Dla lokalnego SQLite
     engine = create_engine(db_url)
 
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine)
 
-# TEST POŁĄCZENIA - Wyświetli błąd bezpośrednio w aplikacji jeśli nie zadziała
+# TEST POŁĄCZENIA Z DIAGNOSTYKĄ
 try:
     with engine.connect() as conn:
+        # Jeśli tutaj wejdzie, to znaczy, że działa!
         pass
-    # Jeśli przejdzie tutaj, znaczy że połączenie działa
 except Exception as e:
-    st.error("🚨 Problem z bazą danych!")
-    st.info("Sprawdź czy hasło w Secrets nie zawiera znaków specjalnych i czy baza w Supabase jest aktywna.")
-    st.stop() # Zatrzymaj aplikację, żeby nie sypała tracebackiem
+    st.error("🚨 Problem z połączeniem:")
+    st.code(str(e))
+    st.stop()
 
 # Tworzenie tabel
 Base.metadata.create_all(engine)
