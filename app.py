@@ -8,12 +8,10 @@ from datetime import datetime
 st.set_page_config(page_title="LifeOS", layout="wide")
 
 # --- KONFIGURACJA AI ---
-# Zamiast wpisywać klucz tutaj, bierzemy go z "bezpiecznego schowka" Streamlit
 try:
     api_key = st.secrets["GEMINI_KEY"]
 except:
-    # To pozwoli Ci nadal uruchamiać kod lokalnie na komputerze
-    api_key = "TWÓJ_KLUCZ_API_DO_TESTÓW_LOKALNYCH"
+    api_key = "TWOJ_KLUCZ_LOKALNY"
 
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel('models/gemini-2.5-flash')
@@ -22,33 +20,22 @@ def get_calories_from_ai(ingredient_name, weight_g):
     prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
     try:
         response = model.generate_content(prompt)
-        clean_result = response.text.strip()
-        return float(clean_result)
+        return float(response.text.strip())
     except Exception as e:
         st.error(f"Błąd AI: {e}")
         return 0.0
 
-# --- BAZA DANYCH ---
+# --- BAZA DANYCH (To jest okolica linii 43) ---
 try:
     DB_URL = st.secrets["DB_URL"]
-except:
+except Exception:
     DB_URL = 'sqlite:///lifeos_core.db'
 
+# Poprawka formatu dla SQLAlchemy (Supabase używa postgresql://)
 if DB_URL.startswith("postgresql://"):
     DB_URL = DB_URL.replace("postgresql://", "postgresql+psycopg2://")
 
-# Dodajemy pool_pre_ping (sprawdza połączenie przed użyciem) 
-# oraz connect_args, aby uniknąć problemów z timeoutem
-engine = create_engine(
-    try:
-    with engine.connect() as connection:
-        st.write("✅ Połączono z bazą danych!")
-except Exception as e:
-    st.error(f"❌ Problem z bazą: {str(e)}")
-    DB_URL, 
-    pool_pre_ping=True,
-    pool_recycle=3600
-)
+engine = create_engine(DB_URL, pool_pre_ping=True)
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine)
 
