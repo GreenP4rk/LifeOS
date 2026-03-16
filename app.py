@@ -26,42 +26,40 @@ def get_calories_from_ai(ingredient_name, weight_g):
         return 0.0
 
 # --- BAZA DANYCH ---
-try:
-    db_url = st.secrets["DB_URL"]
-except:
-    db_url = 'sqlite:///lifeos_core.db'
+@st.cache_resource
+def init_db():
+    try:
+        db_url = st.secrets["DB_URL"]
+    except Exception:
+        db_url = 'sqlite:///lifeos_core.db'
 
-if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
-    if db_url.startswith("postgresql://"):
-        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
+    if "supabase.com" in db_url or "pooler.supabase.com" in db_url:
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
+        
+        engine = create_engine(
+            db_url,
+            connect_args={
+                "sslmode": "require",
+                "connect_timeout": 10,
+                "options": "-c statement_timeout=30000"
+            },
+            pool_pre_ping=True,
+            pool_recycle=300
+        )
+    else:
+        engine = create_engine(db_url)
     
-    # Pooler w Supabase bez problematycznego parametru
-    engine = create_engine(
-        db_url,
-        connect_args={
-            "sslmode": "require",
-            "connect_timeout": 10,
-            "options": "-c statement_timeout=30000"
-        },
-        pool_pre_ping=True,
-        pool_recycle=300
-    )
-else:
-    engine = create_engine(db_url)
+    # Tworzenie tabel uruchamiamy TYLKO RAZ przy starcie serwera
+    Base = declarative_base()
+    # Tutaj przeniesiemy modele na chwilę przed create_all, żeby nie psuć struktury, 
+    # ale dla uproszczenia Streamlita zrobimy to sprytniej poniżej.
+    
+    return engine
 
+engine = init_db()
 Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine)
-
-# TEST POŁĄCZENIA
-try:
-    with engine.connect() as conn:
-        pass
-except Exception as e:
-    st.error("🚨 Problem z Poolerem Supabase:")
-    st.code(str(e))
-    st.stop()
-
-Base.metadata.create_all(engine)
 
 class MealBatch(Base):
     __tablename__ = 'meal_batches'
@@ -217,9 +215,57 @@ st.markdown("---")
 # --- GŁÓWNA LOGIKA ---
 
 if choice == "🏠 Dashboard":
-    st.subheader("Witaj w swoim Centrum Dowodzenia")
+    st.title("🚀 LifeOS: Twój Dashboard")
     st.info("Wszystkie dane są aktualizowane w czasie rzeczywistym.")
+    
+    # --- LOGIKA DANYCH (Pobierane TYLKO gdy patrzysz na Dashboard) ---
+    db = SessionLocal()
+    today = datetime.now().date()
 
+    today_logs = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
+    total_steps_today = sum(log.steps for log in today_logs)
+    total_kcal_burned_walking = sum(log.calories_burned for log in today_logs)
+
+    total_batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
+    total_val_res = db.query(MealBatch).all()
+    total_value = sum(b.total_price for b in total_val_res if b.total_price)
+
+    last_workout = db.query(WorkoutSet).order_by(WorkoutSet.date.desc()).first()
+
+    today_meals = db.query(MealLog).filter(MealLog.date >= today).all()
+    total_kcal_eaten = sum(m.calories for m in today_meals)
+    remaining_kcal = daily_limit - total_kcal_eaten
+    db.close()
+
+    # --- METRYKI ---
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    with col1:
+        st.metric("Zjedzone dzisiaj", f"{total_kcal_eaten:.0f} kcal", f"Limit: {daily_limit}")
+    with col2:
+        balance = total_kcal_eaten - total_kcal_burned_walking
+        st.metric("Bilans netto", f"{balance:.0f} kcal", delta_color="inverse")
+    with col3:
+        st.metric("Pozostało kcal", f"{remaining_kcal:.0f} kcal")
+    with col4:
+        st.metric("Spalone (spacer)", f"{total_kcal_burned_walking:.0f} kcal")
+    with col5:
+        st.metric("W zamrażarce", f"{total_batches} potraw", f"{total_value:.2f} zł")
+    with col6:
+        if last_workout:
+            st.metric("Ostatni trening", f"{last_workout.weight} kg", "Progres!")
+        else:
+            st.metric("Ostatni trening", "Brak", "Zacznij!")
+
+    # --- WIZUALIZACJA LIMITU ---
+    st.subheader("📊 Postęp dziennego limitu")
+    progress_calculated = min(total_kcal_eaten / daily_limit, 1.0)
+    percentage = progress_calculated * 100
+    st.progress(progress_calculated)
+    st.write(f"Wykorzystałeś **{percentage:.1f}%** swojego limitu ({total_kcal_eaten:.0f} / {daily_limit:.0f} kcal)")
+
+    if total_kcal_eaten > daily_limit:
+        st.warning(f"⚠️ Przekroczyłeś limit o {total_kcal_eaten - daily_limit:.0f} kcal!")
+    st.markdown("---")
 elif choice == "🍳 Nowy Posiłek":
     st.header("🍳 Rejestracja Posiłku")
     mode = st.radio("Co jesz?", ["Świeży posiłek (Kalkulator)", "Zapas z zamrażarki"])
@@ -359,3 +405,5 @@ elif choice == "👟 Aktywność":
 elif choice == "💪 Trening":
     st.header("Trening")
     st.info("Tutaj możesz zarządzać swoimi ćwiczeniami.")
+
+Base.metadata.create_all(engine)
