@@ -161,7 +161,7 @@ if st.sidebar.button("🔍 Testuj połączenie z AI"):
     if client:
         try:
             with st.spinner("Próba kontaktu z Gemini..."):
-                test_resp = client.models.generate_content(model="gemini-2.0-flash", contents="Hi. Respond with OK")
+                test_resp = client.models.generate_content(model="gemini-2.5-flash", contents="Hi. Respond with OK")
                 st.sidebar.success(f"Połączenie OK! Odpowiedź: {test_resp.text}")
         except Exception as e:
             st.sidebar.error(f"Błąd połączenia: {e}")
