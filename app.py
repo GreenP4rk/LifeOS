@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai  # Nowa biblioteka
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
@@ -7,6 +7,39 @@ from datetime import datetime
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
 
+# --- 2. KONFIGURACJA AI (Nowa wersja SDK) ---
+@st.cache_resource
+def init_genai():
+    try:
+        # Pobieranie klucza z bezpiecznych ustawień Streamlit
+        api_key = st.secrets["GEMINI_KEY"]
+        client = genai.Client(api_key=api_key)
+        return client
+    except Exception as e:
+        st.error(f"❌ Błąd konfiguracji AI: Nie znaleziono klucza w Secrets! ({e})")
+        return None
+
+client = init_genai()
+
+def get_calories_from_ai(ingredient_name, weight_g):
+    if client is None:
+        return 0.0
+    
+    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko i wyłącznie liczbę, bez żadnego tekstu."
+    
+    try:
+        # Nowy sposób wywołania modelu Gemini 2.0 Flash
+        response = client.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=prompt
+        )
+        # Wyciąganie samej liczby
+        cleaned_response = response.text.strip().replace(',', '.')
+        return float(''.join(c for c in cleaned_response if c.isdigit() or c == '.'))
+    except Exception as e:
+        st.error(f"⚠️ Problem z obliczeniami AI: {e}")
+        return 0.0
+        
 # --- 2. BAZA DANYCH - MODELE ---
 # Modele muszą być zdefiniowane przed inicjalizacją połączenia
 Base = declarative_base()
@@ -74,27 +107,6 @@ def init_db_engine():
 
 engine = init_db_engine()
 SessionLocal = sessionmaker(bind=engine)
-
-# --- 4. KONFIGURACJA AI (KESHOWANA) ---
-@st.cache_resource
-def init_genai():
-    try:
-        api_key = st.secrets["GEMINI_KEY"]
-    except:
-        api_key = "TWOJ_KLUCZ_LOKALNY"
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('models/gemini-2.5-flash')
-
-model = init_genai()
-
-def get_calories_from_ai(ingredient_name, weight_g):
-    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
-    try:
-        response = model.generate_content(prompt)
-        return float(response.text.strip())
-    except Exception as e:
-        st.error(f"Błąd AI: {e}")
-        return 0.0
 
 # --- 5. FUNKCJE POMOCNICZE I OPTYMALIZACJA ZAPYTAŃ ---
 @st.cache_data(ttl=300) # Pamięta dane przez 5 minut (300 sekund)
