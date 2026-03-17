@@ -1,40 +1,209 @@
 import streamlit as st
-from google import genai  # Nowa biblioteka
+from google import genai
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
+import re
 
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
 
-# --- 2. KONFIGURACJA AI (Nowa wersja SDK) ---
+# --- 2. KONFIGURACJA AI (Nowe SDK: google-genai) ---
 @st.cache_resource
 def init_genai():
     try:
-        # Pobieranie klucza z bezpiecznych ustawień Streamlit
-        api_key = st.secrets["GEMINI_KEY"]
-        client = genai.Client(api_key=api_key)
-        return client
+        # Pobieranie klucza z Streamlit Secrets
+        if "GEMINI_KEY" in st.secrets:
+            api_key = st.secrets["GEMINI_KEY"]
+            return genai.Client(api_key=api_key)
+        else:
+            return None
     except Exception as e:
-        st.error(f"❌ Błąd konfiguracji AI: Nie znaleziono klucza w Secrets! ({e})")
+        st.error(f"Błąd inicjalizacji klienta AI: {e}")
         return None
 
 client = init_genai()
 
 def get_calories_from_ai(ingredient_name, weight_g):
     if client is None:
+        st.error("Brak klucza API (GEMINI_KEY) w Secrets!")
         return 0.0
     
-    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko i wyłącznie liczbę, bez żadnego tekstu."
+    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
     
     try:
-        # Nowy sposób wywołania modelu Gemini 2.0 Flash
+        st.toast(f"🤖 AI liczy: {ingredient_name}...")
         response = client.models.generate_content(
             model="gemini-2.0-flash", 
             contents=prompt
         )
-        # Wyciąganie samej liczby
-        cleaned_response = response.text.strip().replace(',', '.')
+        # Wyciąganie samej liczby za pomocą regex (bezpieczniejsze)
+        text = response.text.strip().replace(',', '.')
+        match = re.search(r"[-+]?\d*\.\d+|\d+", text)
+        
+        if match:
+            kcal = float(match.group())
+            st.toast(f"✅ Obliczono: {kcal} kcal")
+            return kcal
+        else:
+            st.warning(f"AI zwróciło dziwny format: {text}")
+            return 0.0
+    except Exception as e:
+        st.error(f"Błąd podczas zapytania AI: {e}")
+        return 0.0
+
+# --- 3. BAZA DANYCH (Szybkie Modele) ---
+Base = declarative_base()
+
+class MealBatch(Base):
+    __tablename__ = 'meal_batches'
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    original_weight_g = Column(Float)
+    current_weight_g = Column(Float)
+    total_calories = Column(Float)
+    total_price = Column(Float)
+    date_prepared = Column(DateTime, default=datetime.now)
+
+class ActivityLog(Base):
+    __tablename__ = 'activity_log'
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, default=datetime.now)
+    steps = Column(Integer)
+    calories_burned = Column(Float)
+
+class MealLog(Base):
+    __tablename__ = 'meal_logs'
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, default=datetime.now)
+    calories = Column(Float)
+
+class Settings(Base):
+    __tablename__ = 'settings'
+    id = Column(Integer, primary_key=True)
+    key = Column(String, unique=True)
+    value = Column(Float)
+
+@st.cache_resource
+def init_db_engine():
+    try:
+        db_url = st.secrets["DB_URL"]
+        if "postgresql" in db_url and "postgresql+psycopg2" not in db_url:
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
+    except:
+        db_url = 'sqlite:///lifeos_core.db'
+    
+    return create_engine(db_url, pool_pre_ping=True)
+
+engine = init_db_engine()
+SessionLocal = sessionmaker(bind=engine)
+
+# --- 4. FUNKCJE DANYCH (Zoptymalizowane) ---
+@st.cache_data(ttl=300)
+def get_daily_limit():
+    db = SessionLocal()
+    setting = db.query(Settings).filter_by(key="daily_limit").first()
+    db.close()
+    return setting.value if setting else 2500.0
+
+@st.cache_data(ttl=60)
+def get_dashboard_metrics():
+    db = SessionLocal()
+    today = datetime.now().date()
+    eaten = sum(m.calories for m in db.query(MealLog).filter(MealLog.date >= today).all())
+    burned = sum(a.calories_burned for a in db.query(ActivityLog).filter(ActivityLog.date >= today).all())
+    batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
+    db.close()
+    return {"eaten": eaten, "burned": burned, "batches": batches}
+
+# --- 5. BOCZNY PANEL I NAWIGACJA ---
+st.sidebar.title("🧭 Menu LifeOS")
+choice = st.sidebar.radio("Przejdź do:", ["🏠 Dashboard", "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność"])
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🛠️ Diagnostyka i Ustawienia")
+
+# PRZYCISK TESTOWY AI
+if st.sidebar.button("🔍 Testuj połączenie z AI"):
+    if client:
+        try:
+            with st.spinner("Próba kontaktu z Gemini..."):
+                test_resp = client.models.generate_content(model="gemini-2.0-flash", contents="Hi. Respond with 'OK'")
+                st.sidebar.success(f"Połączenie OK! Odpowiedź: {test_resp.text}")
+        except Exception as e:
+            st.sidebar.error(f"Błąd połączenia: {e}")
+    else:
+        st.sidebar.error("Brak klucza GEMINI_KEY w Secrets!")
+
+if st.sidebar.button("🏗️ Wymuś bazę"):
+    Base.metadata.create_all(engine)
+    st.sidebar.success("Tabele gotowe!")
+
+# --- 6. LOGIKA EKRANÓW ---
+if choice == "🏠 Dashboard":
+    st.title("🚀 Dashboard")
+    metrics = get_dashboard_metrics()
+    limit = get_daily_limit()
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Zjedzone", f"{metrics['eaten']:.0f} kcal")
+    c2.metric("Spalone", f"{metrics['burned']:.0f} kcal")
+    c3.metric("Pozostało", f"{limit - metrics['eaten']:.0f} kcal")
+    
+    st.progress(min(metrics['eaten'] / limit, 1.0))
+
+elif choice == "🍳 Nowy Posiłek":
+    st.header("🍳 Rejestracja Posiłku")
+    ing_name = st.text_input("Co jesz? (np. Jajecznica z 3 jaj)")
+    ing_weight = st.number_input("Waga (g)", min_value=0.0, step=10.0)
+    
+    if st.button("🔥 Oblicz i dodaj"):
+        if ing_name and ing_weight > 0:
+            kcal = get_calories_from_ai(ing_name, ing_weight)
+            if kcal > 0:
+                db = SessionLocal()
+                db.add(MealLog(calories=kcal))
+                db.commit()
+                db.close()
+                get_dashboard_metrics.clear()
+                st.success(f"Dodano {kcal:.0f} kcal do dziennika!")
+        else:
+            st.warning("Wpisz nazwę i wagę!")
+
+elif choice == "➕ Dodaj Batch":
+    st.header("➕ Dodaj do zamrażarki")
+    b_name = st.text_input("Nazwa potrawy")
+    b_weight = st.number_input("Waga całkowita (g)", min_value=0.0)
+    b_ingredients = st.text_area("Składniki (jeden pod drugim, np. 500g kurczaka)")
+    
+    if st.button("💾 Zapisz Batch"):
+        with st.spinner("AI analizuje cały przepis..."):
+            # Prosta analiza zbiorcza dla oszczędności czasu
+            kcal = get_calories_from_ai(b_ingredients, 1.0) # Tu AI liczy całość
+            db = SessionLocal()
+            db.add(MealBatch(name=b_name, original_weight_g=b_weight, current_weight_g=b_weight, total_calories=kcal))
+            db.commit()
+            db.close()
+            st.success("Danie zapisane!")
+
+elif choice == "📦 Zamrażarka":
+    st.header("📦 Zawartość zamrażarki")
+    db = SessionLocal()
+    items = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
+    for item in items:
+        st.write(f"**{item.name}**: {item.current_weight_g:.0f}g pozostało")
+    db.close()
+
+elif choice == "👟 Aktywność":
+    st.header("👟 Kroki")
+    steps = st.number_input("Liczba kroków", min_value=0, step=100)
+    if st.button("Zapisz"):
+        db = SessionLocal()
+        db.add(ActivityLog(steps=steps, calories_burned=steps * 0.04))
+        db.commit()
+        db.close()
+        get_dashboard_metrics.clear()
+        st.success("Zapisano!")        cleaned_response = response.text.strip().replace(',', '.')
         return float(''.join(c for c in cleaned_response if c.isdigit() or c == '.'))
     except Exception as e:
         st.error(f"⚠️ Problem z obliczeniami AI: {e}")
