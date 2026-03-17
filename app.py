@@ -33,7 +33,7 @@ def get_calories_from_ai(ingredient_name, weight_g):
     try:
         st.toast(f"🤖 AI liczy: {ingredient_name}...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash", 
+            model="gemini-2.5-flash", 
             contents=prompt
         )
         # Czyszczenie odpowiedzi i wyciąganie liczby
