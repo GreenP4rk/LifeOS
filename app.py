@@ -183,14 +183,36 @@ current_saved_limit = get_daily_limit()
 if choice == "🏠 Dashboard":
     st.title("🚀 Dashboard")
     dash_data = get_dashboard_data()
-    remaining = current_saved_limit - dash_data["eaten"]
+    limit = get_daily_limit()
+    
+    # LOGIKA: Limit (np. 2500) - Zjedzone (np. 1500) + Spalone (np. 300) = 1300 pozostało
+    # Spalone kalorie "oddają" Ci miejsce w limicie.
+    remaining = limit - dash_data["eaten"] + dash_data["burned"]
+    
+    # Bilans netto (Zjedzone - Spalone)
+    net_balance = dash_data["eaten"] - dash_data["burned"]
     
     col1, col2, col3 = st.columns(3)
-    col1.metric("Zjedzone", f"{dash_data['eaten']:.0f} kcal")
-    col2.metric("Pozostało", f"{remaining:.0f} kcal")
-    col3.metric("Spalone", f"{dash_data['burned']:.0f} kcal")
     
-    st.progress(min(dash_data["eaten"] / current_saved_limit, 1.0))
+    # Metryka 1: Zjedzone
+    col1.metric("Zjedzone", f"{dash_data['eaten']:.0f} kcal")
+    
+    # Metryka 2: Spalone (Spacer)
+    col2.metric("Spalone", f"{dash_data['burned']:.0f} kcal", delta=f"{dash_data['burned']:.0f} bonus", delta_color="normal")
+    
+    # Metryka 3: Pozostało (z uwzględnieniem ruchu)
+    # Jeśli spaliłeś dużo, ta liczba wzrośnie
+    col3.metric("Pozostało", f"{remaining:.0f} kcal", help="Wzór: Limit - Zjedzone + Spalone")
+    
+    st.markdown("---")
+    st.subheader("📊 Stan limitu")
+    
+    # Pasek postępu - pokazuje ile zjadłeś w stosunku do "limit + spalone"
+    total_allowed = limit + dash_data["burned"]
+    progress = min(dash_data["eaten"] / total_allowed, 1.0) if total_allowed > 0 else 0
+    
+    st.progress(progress)
+    st.write(f"Wykorzystano **{dash_data['eaten']:.0f}** z **{total_allowed:.0f}** dostępnych dzisiaj kcal (wliczając aktywność).")
 
 elif choice == "🍳 Nowy Posiłek":
     st.header("🍳 Rejestracja Posiłku")
