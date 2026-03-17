@@ -185,34 +185,48 @@ if choice == "🏠 Dashboard":
     dash_data = get_dashboard_data()
     limit = get_daily_limit()
     
-    # LOGIKA: Limit (np. 2500) - Zjedzone (np. 1500) + Spalone (np. 300) = 1300 pozostało
-    # Spalone kalorie "oddają" Ci miejsce w limicie.
-    remaining = limit - dash_data["eaten"] + dash_data["burned"]
+    # Obliczenia
+    total_allowed = limit + dash_data["burned"]
+    remaining = total_allowed - dash_data["eaten"]
+    is_over_limit = remaining < 0
     
-    # Bilans netto (Zjedzone - Spalone)
-    net_balance = dash_data["eaten"] - dash_data["burned"]
-    
+    # 1. ALERT PRZEKROCZENIA (Czerwone podświetlenie)
+    if is_over_limit:
+        st.error(f"⚠️ PRZEKROCZONO LIMIT o {abs(remaining):.0f} kcal!")
+    elif remaining < 200:
+        st.warning(f"🔔 Uwaga: Zostało tylko {remaining:.0f} kcal.")
+    else:
+        st.success(f"✅ Świetnie! Masz jeszcze {remaining:.0f} kcal zapasu.")
+
+    # 2. METRYKI
     col1, col2, col3 = st.columns(3)
     
-    # Metryka 1: Zjedzone
     col1.metric("Zjedzone", f"{dash_data['eaten']:.0f} kcal")
+    col2.metric("Spalone", f"{dash_data['burned']:.0f} kcal", delta=f"{dash_data['burned']:.0f} bonus")
     
-    # Metryka 2: Spalone (Spacer)
-    col2.metric("Spalone", f"{dash_data['burned']:.0f} kcal", delta=f"{dash_data['burned']:.0f} bonus", delta_color="normal")
-    
-    # Metryka 3: Pozostało (z uwzględnieniem ruchu)
-    # Jeśli spaliłeś dużo, ta liczba wzrośnie
-    col3.metric("Pozostało", f"{remaining:.0f} kcal", help="Wzór: Limit - Zjedzone + Spalone")
+    # Dynamiczny kolor delty dla "Pozostało"
+    # Jeśli na minusie, delta pokaże się na czerwono
+    col3.metric(
+        "Pozostało", 
+        f"{remaining:.0f} kcal", 
+        delta=f"{remaining:.0f}" if is_over_limit else None,
+        delta_color="inverse"
+    )
     
     st.markdown("---")
-    st.subheader("📊 Stan limitu")
     
-    # Pasek postępu - pokazuje ile zjadłeś w stosunku do "limit + spalone"
-    total_allowed = limit + dash_data["burned"]
+    # 3. PASEK POSTĘPU
+    st.subheader("📊 Stan limitu")
     progress = min(dash_data["eaten"] / total_allowed, 1.0) if total_allowed > 0 else 0
     
+    # Jeśli przekroczono limit, pasek może zmienić się wizualnie (Streamlit progress jest zawsze zielony/niebieski, 
+    # ale możemy dodać tekst pod spodem)
     st.progress(progress)
-    st.write(f"Wykorzystano **{dash_data['eaten']:.0f}** z **{total_allowed:.0f}** dostępnych dzisiaj kcal (wliczając aktywność).")
+    
+    if is_over_limit:
+        st.write(f"📈 Wykorzystano **{progress*100:.1f}%** (Przekroczenie o {abs(remaining):.0f} kcal)")
+    else:
+        st.write(f"Wykorzystano **{progress*100:.1f}%** dostępnej energii.")
 
 elif choice == "🍳 Nowy Posiłek":
     st.header("🍳 Rejestracja Posiłku")
