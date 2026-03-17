@@ -203,7 +203,8 @@ elif choice == "👟 Aktywność":
         db.commit()
         db.close()
         get_dashboard_metrics.clear()
-        st.success("Zapisano!")        cleaned_response = response.text.strip().replace(',', '.')
+        st.success("Zapisano!")        
+        cleaned_response = response.text.strip().replace(',', '.')
         return float(''.join(c for c in cleaned_response if c.isdigit() or c == '.'))
     except Exception as e:
         st.error(f"⚠️ Problem z obliczeniami AI: {e}")
