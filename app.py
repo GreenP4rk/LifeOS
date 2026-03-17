@@ -138,11 +138,17 @@ def get_dashboard_data():
     }
 
 def get_daily_limit():
-    db = SessionLocal()
-    setting = db.query(Settings).filter_by(key="daily_limit").first()
-    db.close()
-    return setting.value if setting else 2500.0
-
+    try:
+        db = SessionLocal()
+        from sqlalchemy import text
+        result = db.execute(text("SELECT value FROM settings WHERE key = 'daily_limit'")).fetchone()
+        db.close()
+        if result:
+            return int(result[0])
+        return 1850 # Domyślny, jeśli baza zawiedzie
+    except:
+        return 1850
+        
 def set_daily_limit(new_limit):
     db = SessionLocal()
     setting = db.query(Settings).filter_by(key="daily_limit").first()
@@ -159,22 +165,51 @@ choice = st.sidebar.radio("Przejdź do:",
     ["🏠 Dashboard", "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność", "💪 Trening"])
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🛠️ Diagnostyka")
 
-if st.sidebar.button("🔍 Testuj połączenie z AI"):
-    if client:
-        try:
-            with st.spinner("Próba kontaktu z Gemini..."):
-                test_resp = client.models.generate_content(model="gemini-2.5-flash", contents="Hi. Respond with OK")
-                st.sidebar.success(f"Połączenie OK! Odpowiedź: {test_resp.text}")
-        except Exception as e:
-            st.sidebar.error(f"Błąd połączenia: {e}")
-    else:
-        st.sidebar.error("Brak klucza GEMINI_KEY w Secrets!")
+# --- SEKCOJA 1: USTWIENIA LIMITU ---
+st.sidebar.markdown("### ⚙️ Twój Plan")
+current_limit = get_daily_limit()
 
-if st.sidebar.button("🏗️ Wymuś strukturę bazy"):
-    Base.metadata.create_all(engine)
-    st.sidebar.success("Struktura sprawdzona!")
+# Wybór limitu z krokiem 50 kcal
+new_limit = st.sidebar.number_input(
+    "Dzienny cel (kcal)", 
+    value=current_limit, 
+    step=50,
+    min_value=1200,
+    max_value=5000
+)
+
+if new_limit != current_limit:
+    if st.sidebar.button("💾 Zapisz nowy limit"):
+        db = SessionLocal()
+        from sqlalchemy import text
+        db.execute(text("INSERT INTO settings (key, value) VALUES ('daily_limit', :val) "
+                        "ON CONFLICT (key) DO UPDATE SET value = :val"), {"val": str(new_limit)})
+        db.commit()
+        db.close()
+        st.sidebar.success(f"Limit zmieniony na {new_limit}!")
+        st.rerun()
+
+st.sidebar.markdown("---")
+
+# --- SEKCOJA 2: TRYB DEBUGOWANIA (SCHOWANY) ---
+with st.sidebar.expander("🛠️ Debug & Developer Tools"):
+    st.write("Funkcje testowe i administracyjne")
+    
+    if st.button("🧨 Resetuj tabelę Aktywność"):
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS activity_log CASCADE"))
+            conn.commit()
+        Base.metadata.create_all(engine)
+        st.warning("Tabela ActivityLog została zresetowana.")
+        
+    if st.button("🔨 Wymuś strukturę bazy"):
+        Base.metadata.create_all(engine)
+        st.info("Zaktualizowano schemat tabel.")
+        
+    if st.checkbox("Pokaż surowe dane sesji"):
+        st.write(st.session_state)
 
 # --- 7. LOGIKA APLIKACJI ---
 
