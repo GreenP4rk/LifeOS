@@ -70,10 +70,10 @@ class ActivityLog(Base):
     date = Column(DateTime, default=datetime.now)
     steps = Column(Integer, default=0)
     calories_burned = Column(Float)
-    distance_km = Column(Float, nullable=True) # Nowe
-    duration_str = Column(String, nullable=True) # Nowe
-    avg_pace = Column(String, nullable=True) # Nowe
-    avg_hr = Column(Integer, nullable=True) # Nowe
+    distance_km = Column(Float, nullable=True)
+    duration_str = Column(String, nullable=True)
+    avg_pace = Column(String, nullable=True)
+    avg_hr = Column(Integer, nullable=True)
 
 class WorkoutSet(Base):
     __tablename__ = 'workout_sets'
@@ -253,91 +253,105 @@ elif choice == "📦 Zamrażarka":
 elif choice == "👟 Aktywność":
     st.header("👟 Monitoring Aktywności")
     
-    tabs = st.tabs(["📸 Import ze zdjęcia", "✍️ Wpis ręczny", "📈 Historia i Postępy"])
+    # Inicjalizacja pamięci sesji dla wyniku analizy
+    if 'walk_data' not in st.session_state:
+        st.session_state.walk_data = None
+
+    tabs = st.tabs(["📸 Import ze zdjęcia", "✍️ Wpis ręczny", "📈 Historia"])
     
     with tabs[0]:
-        st.subheader("Wgraj zrzut ekranu z Apple Fitness")
-        uploaded_file = st.file_uploader("Wybierz zdjęcie...", type=["jpg", "jpeg", "png"])
+        st.subheader("Wgraj zrzut ekranu z Fitness")
+        uploaded_file = st.file_uploader("Wybierz zdjęcie...", type=["jpg", "jpeg", "png"], key="fitness_upload")
         
         if uploaded_file is not None:
-            st.image(uploaded_file, caption="Twój spacer", width=300)
-            if st.button("🚀 Analizuj spacer"):
-                with st.spinner("Gemini czyta dane ze zdjęcia..."):
+            st.image(uploaded_file, caption="Podgląd zrzutu", width=250)
+            
+            if st.button("🚀 Analizuj zdjęcie"):
+                with st.spinner("Gemini analizuje tętno i kalorie aktywne..."):
                     try:
                         import PIL.Image
                         img = PIL.Image.open(uploaded_file)
                         
+                        # Zaktualizowany prompt - nacisk na KALORIE AKTYWNE
                         prompt = """
-                        Zanalizuj ten zrzut ekranu z aplikacji Fitness. 
-                        Wyciągnij następujące dane:
-                        1. Spalone kalorie (kcal)
-                        2. Dystans (km)
-                        3. Czas trwania (minuty lub hh:mm)
-                        4. Średnie tętno (BPM)
-                        5. Średnie tempo (min/km)
-                        Zwróć odpowiedź WYŁĄCZNIE w formacie JSON:
-                        {"kcal": 0.0, "distance": 0.0, "duration": "00:00", "hr": 0, "pace": "0:00"}
-                        Jeśli czegoś nie widzi, wpisz null.
+                        Zanalizuj zrzut ekranu z Apple Fitness. 
+                        Wyciągnij dane i zwróć TYLKO JSON:
+                        {
+                          "kcal": 0.0, 
+                          "distance": 0.0, 
+                          "duration": "00:00", 
+                          "hr": 0, 
+                          "pace": "0:00"
+                        }
+                        UWAGA: Dla 'kcal' weź wartość opisaną jako 'kalorie aktywne' (active calories), nie 'razem'.
                         """
                         
-                        # Wysyłamy obraz + prompt
                         response = client.models.generate_content(
                             model="gemini-2.5-flash",
                             contents=[prompt, img]
                         )
                         
-                        # Parsowanie wyniku
                         import json
-                        data = json.loads(re.search(r"\{.*\}", response.text, re.DOTALL).group())
+                        # Wyciąganie JSON-a z tekstu
+                        clean_json = re.search(r"\{.*\}", response.text, re.DOTALL).group()
+                        st.session_state.walk_data = json.loads(clean_json)
+                        st.success("Analiza zakończona! Sprawdź dane poniżej.")
                         
-                        st.success("Dane odczytane!")
-                        col1, col2, col3, col4 = st.columns(4)
-                        col1.metric("Kalorie", f"{data['kcal']} kcal")
-                        col2.metric("Dystans", f"{data['distance']} km")
-                        col3.metric("Tempo", f"{data['pace']} /km")
-                        col4.metric("Tętno", f"{data['hr']} BPM")
-                        
-                        if st.button("💾 Zapisz ten spacer"):
-                            db = SessionLocal()
-                            # Tutaj zapisujemy do bazy (pamiętaj o dodaniu kolumn do modelu ActivityLog w sekcji 3)
-                            new_log = ActivityLog(
-                                calories_burned=float(data['kcal']),
-                                steps=0, # Możemy dodać detekcję kroków też
-                                date=datetime.now()
-                            )
-                            # Uwaga: Jeśli dodałeś kolumny do klasy ActivityLog, dopisz je tutaj:
-                            # new_log.distance = float(data['distance'])
-                            # new_log.pace = data['pace']
-                            
-                            db.add(new_log)
-                            db.commit()
-                            db.close()
-                            get_dashboard_data.clear()
-                            st.balloons()
-                            st.success("Spacer zapisany w historii!")
-                            
                     except Exception as e:
-                        st.error(f"Błąd analizy zdjęcia: {e}")
+                        st.error(f"Błąd analizy: {e}")
+
+        # Wyświetlanie wyniku z sesji (jeśli istnieje) i przycisk zapisu
+        if st.session_state.walk_data:
+            d = st.session_state.walk_data
+            st.markdown("---")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Kalorie Aktywne", f"{d['kcal']} kcal")
+            c2.metric("Dystans", f"{d['distance']} km")
+            c3.metric("Tempo", f"{d['pace']} /km")
+            c4.metric("Tętno", f"{d['hr']} BPM")
+
+            if st.button("✅ Potwierdź i zapisz do bazy"):
+                try:
+                    db = SessionLocal()
+                    new_walk = ActivityLog(
+                        calories_burned=float(d['kcal']),
+                        distance_km=float(d['distance']) if d['distance'] else 0.0,
+                        duration_str=str(d['duration']),
+                        avg_pace=str(d['pace']),
+                        avg_hr=int(d['hr']) if d['hr'] else 0,
+                        date=datetime.now()
+                    )
+                    db.add(new_walk)
+                    db.commit()
+                    db.close()
+                    
+                    # Czyścimy sesję po zapisie
+                    st.session_state.walk_data = None
+                    get_dashboard_data.clear() # Czyścimy cache dashboardu
+                    st.success("Spacer zapisany! Bilans kalorii został zaktualizowany.")
+                    st.balloons()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Błąd zapisu do bazy: {e}")
 
     with tabs[1]:
-        steps = st.number_input("Liczba kroków (ręcznie)", min_value=0, step=100)
-        if st.button("Zapisz kroki"):
+        manual_steps = st.number_input("Kroki", min_value=0, step=500)
+        if st.button("Zapisz kroki ręcznie"):
             db = SessionLocal()
-            db.add(ActivityLog(steps=steps, calories_burned=steps * 0.04))
+            db.add(ActivityLog(steps=manual_steps, calories_burned=manual_steps * 0.04))
             db.commit()
             db.close()
             get_dashboard_data.clear()
-            st.success("Zapisano!")
+            st.success("Zapisano kroki!")
 
     with tabs[2]:
-        st.subheader("Twoje postępy")
+        st.subheader("Ostatnie aktywności")
         db = SessionLocal()
         logs = db.query(ActivityLog).order_by(ActivityLog.date.desc()).limit(5).all()
-        if logs:
-            for log in logs:
-                st.write(f"📅 {log.date.strftime('%d.%m %H:%M')} | 🔥 {log.calories_burned:.0f} kcal")
-        else:
-            st.info("Brak zapisanych aktywności.")
+        for l in logs:
+            with st.expander(f"📅 {l.date.strftime('%d.%m %H:%M')} — {l.calories_burned:.0f} kcal"):
+                st.write(f"📍 Dystans: {l.distance_km} km")
+                st.write(f"⏱ Tempo: {l.avg_pace} /km | ❤️ Tętno: {l.avg_hr} BPM")
         db.close()
 
 elif choice == "💪 Trening":
