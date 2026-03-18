@@ -4,6 +4,10 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import re
+import pandas as pd
+import plotly.graph_objects as go
+from datetime import timedelta
+import numpy as np
 
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
@@ -733,65 +737,111 @@ elif choice == "📏 Pomiary":
     st.header("📏 Śledzenie sylwetki i pomiary")
     
     db = SessionLocal()
-    last_m = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
+    # Pobieramy wszystkie dane do wykresów
+    all_measurements = db.query(BodyMeasurement).order_by(BodyMeasurement.date.asc()).all()
+    last_m = all_measurements[-1] if all_measurements else None
     
-    tabs = st.tabs(["📝 Wprowadź pomiary", "📈 Historia postępów"])
+    tabs = st.tabs(["📝 Wprowadź pomiary", "📈 Historia", "📊 Wykresy i Trendy"])
     
+    # --- TAB 1: WPISYWANIE (bez zmian, tylko dodana data) ---
     with tabs[0]:
-        st.info("💡 Możesz wybrać datę z przeszłości, aby uzupełnić historię swoich postępów.")
-        
-        # --- NOWOŚĆ: Wybór daty ---
         meas_date = st.date_input("Data pomiaru", value=datetime.now().date())
-        
-        c1, col_spacer, c2 = st.columns([1, 0.1, 1]) # Dodany odstęp dla czytelności
+        c1, c2 = st.columns(2)
         with c1:
             st.markdown("#### ⚖️ Podstawowe")
-            w_val = last_m.weight if last_m else 80.0
-            h_val = last_m.height if last_m else 180.0
-            weight = st.number_input("Waga (kg)", value=float(w_val), step=0.1)
-            height = st.number_input("Wzrost (cm)", value=float(h_val), step=1.0)
-            
+            weight = st.number_input("Waga (kg)", value=float(last_m.weight) if last_m else 80.0, step=0.1)
+            height = st.number_input("Wzrost (cm)", value=float(last_m.height) if last_m else 180.0, step=1.0)
         with c2:
             st.markdown("#### 📏 Obwody (cm)")
-            chest = st.number_input("Klatka piersiowa", value=float(last_m.chest) if last_m and last_m.chest else 0.0, step=0.5)
-            waist = st.number_input("Pas (pępek)", value=float(last_m.waist) if last_m and last_m.waist else 0.0, step=0.5)
-            belly = st.number_input("Brzuch (najszersze)", value=float(last_m.belly) if last_m and last_m.belly else 0.0, step=0.5)
-            thigh = st.number_input("Udo", value=float(last_m.thigh) if last_m and last_m.thigh else 0.0, step=0.5)
-            biceps = st.number_input("Biceps", value=float(last_m.biceps) if last_m and last_m.biceps else 0.0, step=0.5)
-            
+            waist = st.number_input("Pas (pępek)", value=float(last_m.waist) if last_m else 0.0, step=0.5)
+            belly = st.number_input("Brzuch", value=float(last_m.belly) if last_m else 0.0, step=0.5)
+            biceps = st.number_input("Biceps", value=float(last_m.biceps) if last_m else 0.0, step=0.5)
+
         if st.button("💾 Zapisz pomiary"):
-            # Konwersja daty ze Streamlit na format datetime dla bazy danych
-            final_datetime = datetime.combine(meas_date, datetime.now().time())
-            
-            new_m = BodyMeasurement(
-                weight=weight, height=height, chest=chest, waist=waist, 
-                belly=belly, thigh=thigh, biceps=biceps, 
-                date=final_datetime # Używamy wybranej daty zamiast "now"
-            )
+            final_dt = datetime.combine(meas_date, datetime.now().time())
+            new_m = BodyMeasurement(weight=weight, height=height, waist=waist, belly=belly, biceps=biceps, date=final_dt)
             db.add(new_m)
             db.commit()
-            st.success(f"Pomiary z dnia {meas_date.strftime('%d.%m.%Y')} zostały zapisane!")
+            st.success("Zapisano!")
             st.rerun()
 
+    # --- TAB 2: HISTORIA (krótka lista) ---
     with tabs[1]:
-        # Sortujemy od najnowszych, żeby widzieć historię
-        measurements = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).all()
-        if measurements:
-            for m in measurements:
-                with st.expander(f"📅 {m.date.strftime('%d.%m.%Y')} — {m.weight} kg"):
-                    col_a, col_b = st.columns(2)
-                    col_a.write(f"**Pas:** {m.waist} cm")
-                    col_a.write(f"**Brzuch:** {m.belly} cm")
-                    col_a.write(f"**Klatka:** {m.chest} cm")
-                    col_b.write(f"**Udo:** {m.thigh} cm")
-                    col_b.write(f"**Biceps:** {m.biceps} cm")
-                    col_b.write(f"**Wzrost:** {m.height} cm")
-                    
-                    # Opcja usuwania błędnego wpisu
-                    if st.button("🗑️ Usuń ten wpis", key=f"del_meas_{m.id}"):
-                        db.delete(m)
-                        db.commit()
-                        st.rerun()
+        for m in reversed(all_measurements):
+            st.write(f"📅 {m.date.strftime('%d.%m')} | **{m.weight}kg** | Pas: {m.waist}cm | Brzuch: {m.belly}cm")
+
+    # --- TAB 3: WYKRESY (NOWOŚĆ) ---
+    with tabs[2]:
+        if len(all_measurements) < 2:
+            st.info("Potrzebujesz co najmniej dwóch pomiarów, aby wygenerować wykres trendu.")
         else:
-            st.write("Brak historii pomiarów.")
+            # Konwersja danych z bazy do DataFrame
+            df = pd.DataFrame([{
+                'Data': m.date,
+                'Waga': m.weight,
+                'Pas': m.waist,
+                'Brzuch': m.belly,
+                'Biceps': m.biceps
+            } for m in all_measurements])
+            
+            # Wybór parametru do wyświetlenia
+            option = st.selectbox("Wybierz parametr do analizy:", ["Waga", "Pas", "Brzuch", "Biceps"])
+            
+            # --- OBLICZENIA TRENDU ---
+            df['timestamp'] = df['Data'].map(pd.Timestamp.timestamp)
+            z = np.polyfit(df['timestamp'], df[option], 1) # Regresja liniowa
+            p = np.poly1d(z)
+            
+            # Przygotowanie osi czasu dla prognozy (dzisiaj + 14 dni)
+            last_date = df['Data'].max()
+            future_dates = [last_date + timedelta(days=i) for i in range(15)]
+            future_timestamps = [pd.Timestamp(d).timestamp() for d in future_dates]
+            future_trend = p(future_timestamps)
+
+            # --- TWORZENIE WYKRESU PLOTLY ---
+            fig = go.Figure()
+
+            # 1. Linia z prawdziwymi pomiarami
+            fig.add_trace(go.Scatter(
+                x=df['Data'], y=df[option],
+                mode='lines+markers',
+                name='Pomiary',
+                line=dict(color='#00f2ff', width=3),
+                marker=dict(size=8)
+            ))
+
+            # 2. Linia trendu i prognozy (przerywana)
+            combined_dates = pd.concat([df['Data'], pd.Series(future_dates[1:])])
+            combined_trend = p(pd.concat([df['timestamp'], pd.Series(future_timestamps[1:])]))
+            
+            fig.add_trace(go.Scatter(
+                x=combined_dates, y=combined_trend,
+                mode='lines',
+                name='Trend i Prognoza (14 dni)',
+                line=dict(color='rgba(255, 255, 255, 0.4)', dash='dash')
+            ))
+
+            # Stylizacja wykresu
+            fig.update_layout(
+                title=f"Analiza: {option}",
+                xaxis_title="Data",
+                yaxis_title=option,
+                template="plotly_dark",
+                hovermode="x unified",
+                showlegend=True
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # --- INTERPRETACJA ---
+            current_val = df[option].iloc[-1]
+            predicted_val = future_trend[-1]
+            diff = predicted_val - current_val
+            
+            st.subheader("🤖 Analiza AI Trendu")
+            if diff < 0:
+                st.write(f"Przy obecnym tempie, za 2 tygodnie Twój **{option.lower()}** spadnie o ok. **{abs(diff):.2f}**.")
+            else:
+                st.write(f"Przy obecnym tempie, za 2 tygodnie Twój **{option.lower()}** wzrośnie o ok. **{diff:.2f}**.")
+
     db.close()
