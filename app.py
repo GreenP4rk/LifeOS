@@ -95,6 +95,16 @@ class Settings(Base):
     key = Column(String, unique=True)
     value = Column(Float)
 
+class WorkoutLog(Base):
+    __tablename__ = 'workout_log'
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, default=datetime.now)
+    exercise_name = Column(String)
+    equipment_type = Column(String)
+    weight_kg = Column(Float)
+    reps = Column(Integer)
+    sets = Column(Integer)
+
 # --- 4. BAZA DANYCH - POŁĄCZENIE ---
 @st.cache_resource
 def init_db_engine():
@@ -554,5 +564,58 @@ elif choice == "👟 Aktywność":
         db.close()
 
 elif choice == "💪 Trening":
-    st.header("💪 Trening")
-    st.info("Sekcja w przygotowaniu.")
+    st.header("💪 Dziennik Treningowy")
+    
+    tabs = st.tabs(["📝 Dodaj ćwiczenie", "📈 Historia postępów"])
+    
+    with tabs[0]:
+        with st.form("workout_form", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                ex_name = st.text_input("Nazwa ćwiczenia", placeholder="np. Wyciskanie, Przysiad")
+                eq_type = st.selectbox("Rodzaj obciążenia", ["Masa własna", "Hantle", "Kettlebell", "Inne"])
+            
+            with col2:
+                weight = st.number_input("Ciężar (kg)", min_value=0.0, step=0.5)
+                reps = st.number_input("Liczba powtórzeń", min_value=1, step=1)
+                sets = st.number_input("Liczba serii", min_value=1, step=1)
+                
+            submit_workout = st.form_submit_button("🚀 Zapisz serię / ćwiczenie")
+            
+            if submit_workout:
+                if ex_name:
+                    db = SessionLocal()
+                    new_ex = WorkoutLog(
+                        exercise_name=ex_name,
+                        equipment_type=eq_type,
+                        weight_kg=weight,
+                        reps=reps,
+                        sets=sets,
+                        date=datetime.now()
+                    )
+                    db.add(new_ex)
+                    db.commit()
+                    db.close()
+                    st.success(f"Zapisano: {ex_name} - {sets}x{reps} ({weight}kg)")
+                else:
+                    st.error("Podaj nazwę ćwiczenia!")
+
+    with tabs[1]:
+        st.subheader("Twoja progresja")
+        db = SessionLocal()
+        # Pobieramy historię, grupując po nazwie ćwiczenia, by widzieć progres
+        logs = db.query(WorkoutLog).order_by(WorkoutLog.date.desc()).limit(20).all()
+        
+        if logs:
+            for l in logs:
+                with st.expander(f"📅 {l.date.strftime('%d.%m')} - {l.exercise_name}"):
+                    st.write(f"**Sprzęt:** {l.equipment_type}")
+                    st.write(f"**Wynik:** {l.sets} serii po {l.reps} powtórzeń")
+                    if l.weight_kg > 0:
+                        st.info(f"⚖️ Ciężar: {l.weight_kg} kg")
+                    else:
+                        st.info("💪 Masa własna ciała")
+        else:
+            st.info("Brak zapisanych treningów. Czas na pierwszy wycisk!")
+        db.close()
