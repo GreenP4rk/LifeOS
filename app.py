@@ -733,46 +733,65 @@ elif choice == "📏 Pomiary":
     st.header("📏 Śledzenie sylwetki i pomiary")
     
     db = SessionLocal()
-    # Pobieramy ostatnie pomiary do podglądu/domyślnych wartości
     last_m = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
     
     tabs = st.tabs(["📝 Wprowadź pomiary", "📈 Historia postępów"])
     
     with tabs[0]:
-        st.info("💡 Te dane pozwolą AI precyzyjniej liczyć Twoje zapotrzebowanie i spalone kalorie na treningu.")
+        st.info("💡 Możesz wybrać datę z przeszłości, aby uzupełnić historię swoich postępów.")
         
-        c1, c2 = st.columns(2)
+        # --- NOWOŚĆ: Wybór daty ---
+        meas_date = st.date_input("Data pomiaru", value=datetime.now().date())
+        
+        c1, col_spacer, c2 = st.columns([1, 0.1, 1]) # Dodany odstęp dla czytelności
         with c1:
+            st.markdown("#### ⚖️ Podstawowe")
             w_val = last_m.weight if last_m else 80.0
             h_val = last_m.height if last_m else 180.0
             weight = st.number_input("Waga (kg)", value=float(w_val), step=0.1)
             height = st.number_input("Wzrost (cm)", value=float(h_val), step=1.0)
             
         with c2:
-            st.write("Obwody (cm) - Opcjonalnie")
+            st.markdown("#### 📏 Obwody (cm)")
             chest = st.number_input("Klatka piersiowa", value=float(last_m.chest) if last_m and last_m.chest else 0.0, step=0.5)
-            waist = st.number_input("Pas (na wysokości pępka)", value=float(last_m.waist) if last_m and last_m.waist else 0.0, step=0.5)
-            belly = st.number_input("Brzuch (najszersze miejsce)", value=float(last_m.belly) if last_m and last_m.belly else 0.0, step=0.5)
+            waist = st.number_input("Pas (pępek)", value=float(last_m.waist) if last_m and last_m.waist else 0.0, step=0.5)
+            belly = st.number_input("Brzuch (najszersze)", value=float(last_m.belly) if last_m and last_m.belly else 0.0, step=0.5)
             thigh = st.number_input("Udo", value=float(last_m.thigh) if last_m and last_m.thigh else 0.0, step=0.5)
             biceps = st.number_input("Biceps", value=float(last_m.biceps) if last_m and last_m.biceps else 0.0, step=0.5)
             
         if st.button("💾 Zapisz pomiary"):
+            # Konwersja daty ze Streamlit na format datetime dla bazy danych
+            final_datetime = datetime.combine(meas_date, datetime.now().time())
+            
             new_m = BodyMeasurement(
                 weight=weight, height=height, chest=chest, waist=waist, 
-                belly=belly, thigh=thigh, biceps=biceps, date=datetime.now()
+                belly=belly, thigh=thigh, biceps=biceps, 
+                date=final_datetime # Używamy wybranej daty zamiast "now"
             )
             db.add(new_m)
             db.commit()
-            st.success("Pomiary zaktualizowane! Baza zapisana.")
+            st.success(f"Pomiary z dnia {meas_date.strftime('%d.%m.%Y')} zostały zapisane!")
             st.rerun()
 
     with tabs[1]:
-        measurements = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).limit(10).all()
+        # Sortujemy od najnowszych, żeby widzieć historię
+        measurements = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).all()
         if measurements:
             for m in measurements:
-                with st.expander(f"📅 {m.date.strftime('%d.%m.%Y')} - Waga: {m.weight} kg"):
-                    st.write(f"Wzrost: {m.height} cm | Pas: {m.waist} cm | Brzuch: {m.belly} cm")
-                    st.write(f"Klatka: {m.chest} cm | Udo: {m.thigh} cm | Biceps: {m.biceps} cm")
+                with st.expander(f"📅 {m.date.strftime('%d.%m.%Y')} — {m.weight} kg"):
+                    col_a, col_b = st.columns(2)
+                    col_a.write(f"**Pas:** {m.waist} cm")
+                    col_a.write(f"**Brzuch:** {m.belly} cm")
+                    col_a.write(f"**Klatka:** {m.chest} cm")
+                    col_b.write(f"**Udo:** {m.thigh} cm")
+                    col_b.write(f"**Biceps:** {m.biceps} cm")
+                    col_b.write(f"**Wzrost:** {m.height} cm")
+                    
+                    # Opcja usuwania błędnego wpisu
+                    if st.button("🗑️ Usuń ten wpis", key=f"del_meas_{m.id}"):
+                        db.delete(m)
+                        db.commit()
+                        st.rerun()
         else:
             st.write("Brak historii pomiarów.")
     db.close()
