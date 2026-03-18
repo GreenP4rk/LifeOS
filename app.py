@@ -812,7 +812,7 @@ elif choice == "📏 Pomiary":
             
             combined_dates = pd.concat([df['Data'], pd.Series(future_dates[1:])])
             combined_trend = p(pd.concat([df['timestamp'], pd.Series(future_timestamps[1:])]))
-            fig.add_trace(go.Scatter(x=combined_dates, y=combined_trend, mode='lines', name='Trend (14 dni)', line=dict(color='rgba(255, 255, 255, 0.4)', dash='dash')))
+            fig.add_trace(go.Scatter(x=combined_dates, y=combined_trend, mode='lines', name='Trend (14 dni)', line=dict(color='rgba(255, 0, 0, 0.4)', dash='dash')))
 
             fig.update_layout(title=f"Analiza: {option}", template="plotly_dark", hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
