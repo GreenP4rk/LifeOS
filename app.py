@@ -51,6 +51,29 @@ def get_calories_from_ai(ingredient_name, weight_g):
         st.error(f"⚠️ Błąd podczas zapytania AI: {e}")
         return 0.0
 
+def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
+    if client is None:
+        return 0.0
+    
+    prompt = f"""
+    Użytkownik o wadze {weight_kg} kg i wzroście {height_cm} cm wykonał dzisiaj następujący trening siłowy:
+    {workout_summary}
+    
+    Oszacuj całkowitą liczbę spalonych kalorii podczas tego treningu, biorąc pod uwagę jego parametry ciała, objętość treningową i ciężary. 
+    Zwróć TYLKO samą liczbę (bez tekstu, bez jednostek, np. 350).
+    """
+    try:
+        st.toast("🤖 AI analizuje Twój trening i parametry...")
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        text = response.text.strip().replace(',', '.')
+        match = re.search(r"[-+]?\d*\.\d+|\d+", text)
+        if match:
+            return float(match.group())
+        return 0.0
+    except Exception as e:
+        st.error(f"Błąd AI przy treningu: {e}")
+        return 0.0
+
 # --- 3. BAZA DANYCH - MODELE ---
 Base = declarative_base()
 
@@ -104,6 +127,18 @@ class WorkoutLog(Base):
     weight_kg = Column(Float)
     reps = Column(Integer)
     sets = Column(Integer)
+
+class BodyMeasurement(Base):
+    __tablename__ = 'body_measurements'
+    id = Column(Integer, primary_key=True)
+    date = Column(DateTime, default=datetime.now)
+    weight = Column(Float)
+    height = Column(Float)
+    chest = Column(Float)
+    waist = Column(Float)
+    belly = Column(Float)
+    thigh = Column(Float)
+    biceps = Column(Float)
 
 # --- 4. BAZA DANYCH - POŁĄCZENIE ---
 @st.cache_resource
@@ -172,7 +207,7 @@ def set_daily_limit(new_limit):
 # --- 6. NAWIGACJA ---
 st.sidebar.title("🧭 Menu LifeOS")
 choice = st.sidebar.radio("Przejdź do:", 
-    ["🏠 Dashboard", "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność", "💪 Trening"])
+    ["🏠 Dashboard", "📏 Pomiary", "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność", "💪 Trening"])
 
 st.sidebar.markdown("---")
 
@@ -227,6 +262,19 @@ current_saved_limit = get_daily_limit()
 
 if choice == "🏠 Dashboard":
     st.title("🚀 Dashboard")
+    
+    # Sprawdzanie aktualności pomiarów (Przypominajka)
+    db_dash = SessionLocal()
+    latest_measurement = db_dash.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
+    db_dash.close()
+    
+    if latest_measurement:
+        days_passed = (datetime.now() - latest_measurement.date).days
+        if days_passed >= 7:
+            st.warning(f"🔔 Minęło {days_passed} dni od Twoich ostatnich pomiarów! Zaktualizuj je w zakładce 'Pomiary'.")
+    else:
+        st.info("🔔 Skonfiguruj swój profil w zakładce 'Pomiary', aby rozpocząć monitorowanie postępów.")
+        
     dash_data = get_dashboard_data()
     limit = get_daily_limit()
     
@@ -637,4 +685,94 @@ elif choice == "💪 Trening":
         else:
             st.info("Brak wpisów.")
     
+    db.close()
+
+# To kod do dodania na końcu sekcji Trening (w głównej wcięciu)
+    st.markdown("---")
+    st.subheader("🔥 Podsumowanie dzisiejszego treningu")
+    if st.button("🤖 Oblicz kalorie z dzisiejszego treningu"):
+        db = SessionLocal()
+        today = datetime.now().date()
+        
+        # Pobieramy dzisiejsze ćwiczenia
+        today_logs = db.query(WorkoutLog).filter(WorkoutLog.date >= today).all()
+        
+        # Pobieramy najnowsze wymiary użytkownika
+        latest_meas = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
+        
+        if not today_logs:
+            st.warning("Najpierw dodaj jakieś serie treningowe z dzisiaj!")
+        elif not latest_meas:
+            st.error("Uzupełnij najpierw swoją wagę i wzrost w zakładce 'Pomiary', aby AI mogło poprawnie policzyć kalorie!")
+        else:
+            # Tworzymy podsumowanie treningu jako tekst dla AI
+            summary = "\n".join([f"- {l.exercise_name}: {l.sets} serii, {l.reps} powt., {l.weight_kg}kg ({l.equipment_type})" for l in today_logs])
+            st.text("Przekazywane do AI:")
+            st.text(summary)
+            
+            with st.spinner("AI analizuje intensywność..."):
+                kcal_burned = get_workout_calories_from_ai(summary, latest_meas.weight, latest_meas.height)
+                
+                if kcal_burned > 0:
+                    # Zapisujemy to jako aktywność do bilansu dziennego
+                    db.add(ActivityLog(
+                        steps=0, 
+                        calories_burned=kcal_burned, 
+                        duration_str="Trening Siłowy",
+                        date=datetime.now()
+                    ))
+                    db.commit()
+                    get_dashboard_data.clear()
+                    st.success(f"Doliczono {kcal_burned:.0f} kcal do Twojego dziennego bilansu spalania!")
+                    st.balloons()
+                else:
+                    st.warning("Nie udało się obliczyć kalorii.")
+        db.close()
+
+elif choice == "📏 Pomiary":
+    st.header("📏 Śledzenie sylwetki i pomiary")
+    
+    db = SessionLocal()
+    # Pobieramy ostatnie pomiary do podglądu/domyślnych wartości
+    last_m = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
+    
+    tabs = st.tabs(["📝 Wprowadź pomiary", "📈 Historia postępów"])
+    
+    with tabs[0]:
+        st.info("💡 Te dane pozwolą AI precyzyjniej liczyć Twoje zapotrzebowanie i spalone kalorie na treningu.")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            w_val = last_m.weight if last_m else 80.0
+            h_val = last_m.height if last_m else 180.0
+            weight = st.number_input("Waga (kg)", value=float(w_val), step=0.1)
+            height = st.number_input("Wzrost (cm)", value=float(h_val), step=1.0)
+            
+        with c2:
+            st.write("Obwody (cm) - Opcjonalnie")
+            chest = st.number_input("Klatka piersiowa", value=float(last_m.chest) if last_m and last_m.chest else 0.0, step=0.5)
+            waist = st.number_input("Pas (na wysokości pępka)", value=float(last_m.waist) if last_m and last_m.waist else 0.0, step=0.5)
+            belly = st.number_input("Brzuch (najszersze miejsce)", value=float(last_m.belly) if last_m and last_m.belly else 0.0, step=0.5)
+            thigh = st.number_input("Udo", value=float(last_m.thigh) if last_m and last_m.thigh else 0.0, step=0.5)
+            biceps = st.number_input("Biceps", value=float(last_m.biceps) if last_m and last_m.biceps else 0.0, step=0.5)
+            
+        if st.button("💾 Zapisz pomiary"):
+            new_m = BodyMeasurement(
+                weight=weight, height=height, chest=chest, waist=waist, 
+                belly=belly, thigh=thigh, biceps=biceps, date=datetime.now()
+            )
+            db.add(new_m)
+            db.commit()
+            st.success("Pomiary zaktualizowane! Baza zapisana.")
+            st.rerun()
+
+    with tabs[1]:
+        measurements = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).limit(10).all()
+        if measurements:
+            for m in measurements:
+                with st.expander(f"📅 {m.date.strftime('%d.%m.%Y')} - Waga: {m.weight} kg"):
+                    st.write(f"Wzrost: {m.height} cm | Pas: {m.waist} cm | Brzuch: {m.belly} cm")
+                    st.write(f"Klatka: {m.chest} cm | Udo: {m.thigh} cm | Biceps: {m.biceps} cm")
+        else:
+            st.write("Brak historii pomiarów.")
     db.close()
