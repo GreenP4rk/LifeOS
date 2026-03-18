@@ -263,62 +263,166 @@ if choice == "🏠 Dashboard":
     else:
         st.write(f"Wykorzystano **{progress*100:.1f}%** dostępnej energii.")
 
+# --- 🍳 NOWY POSIŁEK (Z opcją zamrażarki) ---
 elif choice == "🍳 Nowy Posiłek":
     st.header("🍳 Rejestracja Posiłku")
-    if 'current_ingredients' not in st.session_state:
-        st.session_state.current_ingredients = []
-
-    col_in, col_list = st.columns(2)
-    with col_in:
-        ing_name = st.text_input("Składnik (np. łosoś z airfryera)")
-        ing_weight = st.number_input("Waga (g)", min_value=0.0)
-        if st.button("Dodaj składnik"):
-            if ing_name and ing_weight > 0:
-                kcal = get_calories_from_ai(ing_name, ing_weight)
-                st.session_state.current_ingredients.append({'name': ing_name, 'weight': ing_weight, 'kcal': kcal})
-                st.rerun()
-
-    with col_list:
-        total_kcal = sum(i['kcal'] for i in st.session_state.current_ingredients)
-        st.subheader(f"Razem: {total_kcal:.0f} kcal")
-        for i in st.session_state.current_ingredients:
-            st.text(f"• {i['name']}: {i['weight']}g (~{i['kcal']:.0f} kcal)")
-        
-        if st.button("✅ Zapisz posiłek"):
-            db = SessionLocal()
-            db.add(MealLog(calories=total_kcal))
-            db.commit()
-            db.close()
-            get_dashboard_data.clear()
-            st.session_state.current_ingredients = []
-            st.success("Zapisano!")
-            st.rerun()
-
-elif choice == "➕ Dodaj Batch":
-    st.header("📦 Dodaj Batch")
-    b_name = st.text_input("Nazwa potrawy")
-    b_weight = st.number_input("Waga całkowita (g)", min_value=0.0)
-    b_ing = st.text_area("Lista składników (np. 500g kurczaka, 200g ryżu)")
     
-    if st.button("💾 Zapisz do zamrażarki"):
-        if b_name and b_weight > 0:
-            with st.spinner("AI analizuje..."):
-                kcal = get_calories_from_ai(b_ing, 1.0)
+    # Wybór źródła posiłku
+    source = st.radio("Skąd pochodzi posiłek?", ["Kalkulator AI (świeży)", "📦 Wyciągam z zamrażarki"], horizontal=True)
+
+    if source == "Kalkulator AI (świeży)":
+        if 'current_ingredients' not in st.session_state:
+            st.session_state.current_ingredients = []
+
+        col_in, col_list = st.columns(2)
+        with col_in:
+            ing_name = st.text_input("Składnik (np. łosoś z airfryera)")
+            ing_weight = st.number_input("Waga (g)", min_value=0.0, key="fresh_w")
+            if st.button("➕ Dodaj składnik"):
+                if ing_name and ing_weight > 0:
+                    kcal = get_calories_from_ai(ing_name, ing_weight)
+                    st.session_state.current_ingredients.append({'name': ing_name, 'weight': ing_weight, 'kcal': kcal})
+                    st.rerun()
+
+        with col_list:
+            total_kcal = sum(i['kcal'] for i in st.session_state.current_ingredients)
+            st.subheader(f"Razem: {total_kcal:.0f} kcal")
+            for i in st.session_state.current_ingredients:
+                st.text(f"• {i['name']}: {i['weight']}g (~{i['kcal']:.0f} kcal)")
+            
+            if st.button("✅ Zapisz posiłek"):
                 db = SessionLocal()
-                db.add(MealBatch(name=b_name, original_weight_g=b_weight, current_weight_g=b_weight, total_calories=kcal))
+                db.add(MealLog(calories=total_kcal))
                 db.commit()
                 db.close()
                 get_dashboard_data.clear()
-                st.success("Zapisano!")
-        else:
-            st.warning("Uzupełnij dane!")
+                st.session_state.current_ingredients = []
+                st.success("Zapisano w dzienniku!")
+                st.rerun()
 
+    else:
+        st.subheader("📦 Wybór z Twoich zapasów")
+        db = SessionLocal()
+        batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
+        
+        if not batches:
+            st.info("Twoja zamrażarka jest pusta.")
+        else:
+            # Lista dostępnych dań
+            batch_options = {f"{b.name} (Zostało: {b.current_weight_g:.0f}g)": b for b in batches}
+            selected_label = st.selectbox("Co wyciągasz?", list(batch_options.keys()))
+            selected_batch = batch_options[selected_label]
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                weight_to_eat = st.number_input("Ile gramów nakładasz?", 
+                                                min_value=0.0, 
+                                                max_value=float(selected_batch.current_weight_g), 
+                                                step=50.0)
+            with col_b:
+                st.write("") # wyrównanie do przycisku
+                st.write("") 
+                if st.button("🍴 Zjedz całość"):
+                    weight_to_eat = selected_batch.current_weight_g
+
+            if weight_to_eat > 0:
+                # Proporcjonalne liczenie kcal: (Total Kcal / Original Weight) * Portion Weight
+                portion_kcal = (selected_batch.total_calories / selected_batch.original_weight_g) * weight_to_eat
+                st.info(f"Ta porcja ma ok. **{portion_kcal:.0f} kcal**")
+                
+                if st.button("✅ Potwierdź zjedzenie"):
+                    # 1. Odejmij wagę z zamrażarki
+                    target = db.query(MealBatch).filter_by(id=selected_batch.id).first()
+                    target.current_weight_g -= weight_to_eat
+                    
+                    # 2. Dodaj kalorie do dziennika (MealLog)
+                    db.add(MealLog(calories=portion_kcal))
+                    
+                    db.commit()
+                    db.close()
+                    get_dashboard_data.clear()
+                    st.success("Smacznego! Posiłek odliczony od zapasów i dodany do bilansu.")
+                    st.rerun()
+        db.close()
+
+# --- ➕ DODAJ BATCH (Z automatycznym liczeniem wagi) ---
+elif choice == "➕ Dodaj Batch":
+    st.header("📦 Gotowanie na zapas (Batch)")
+    
+    if 'batch_pot' not in st.session_state:
+        st.session_state.batch_pot = []
+
+    b_name = st.text_input("Nazwa potrawy (np. Leczo)", placeholder="Wpisz nazwę całego dania...")
+    
+    col_in, col_summary = st.columns([1, 1])
+    
+    with col_in:
+        st.markdown("### 🛒 Dodaj składnik do garnka")
+        ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
+        ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
+        
+        if st.button("➕ Dodaj do garnka"):
+            if ing_name and ing_weight > 0:
+                with st.spinner("Liczenie kalorii..."):
+                    kcal = get_calories_from_ai(ing_name, ing_weight)
+                    st.session_state.batch_pot.append({
+                        "name": ing_name,
+                        "weight": ing_weight,
+                        "kcal": kcal
+                    })
+                    st.rerun()
+
+    with col_summary:
+        st.markdown("### 🥘 Podsumowanie garnka")
+        total_w = sum(item['weight'] for item in st.session_state.batch_pot)
+        total_k = sum(item['kcal'] for item in st.session_state.batch_pot)
+        
+        for idx, item in enumerate(st.session_state.batch_pot):
+            st.text(f"{idx+1}. {item['name']} ({item['weight']}g)")
+            
+        st.write(f"---")
+        st.write(f"**Waga całkowita:** {total_w:.0f} g")
+        st.write(f"**Kalorie całkowite:** {total_k:.0f} kcal")
+        
+        if st.button("💾 Zapisz do zamrażarki"):
+            if b_name and total_w > 0:
+                db = SessionLocal()
+                db.add(MealBatch(
+                    name=b_name, 
+                    original_weight_g=total_w, 
+                    current_weight_g=total_w, 
+                    total_calories=total_k
+                ))
+                db.commit()
+                db.close()
+                st.session_state.batch_pot = [] # czyścimy garnek
+                st.success(f"Danie '{b_name}' zapisane!")
+                st.rerun()
+            else:
+                st.warning("Podaj nazwę i dodaj składniki!")
+
+# --- 📦 ZAMRAŻARKA (Z opcją usuwania) ---
 elif choice == "📦 Zamrażarka":
-    st.header("📦 Zamrażarka")
+    st.header("📦 Zawartość Zamrażarki")
     db = SessionLocal()
     batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
-    for b in batches:
-        st.write(f"**{b.name}**: {b.current_weight_g:.0f}g pozostało")
+    
+    if not batches:
+        st.info("Zamrażarka jest pusta.")
+    else:
+        for b in batches:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.write(f"**{b.name}**")
+                st.caption(f"Pozostało: {b.current_weight_g:.0f}g z {b.original_weight_g:.0f}g")
+            with col2:
+                if st.button("🗑️ Usuń", key=f"del_{b.id}"):
+                    # Miękkie usuwanie (ustawienie wagi na 0)
+                    target = db.query(MealBatch).filter_by(id=b.id).first()
+                    target.current_weight_g = 0
+                    db.commit()
+                    st.rerun()
+            st.divider()
     db.close()
 
 elif choice == "👟 Aktywność":
