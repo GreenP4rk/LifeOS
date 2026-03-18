@@ -566,6 +566,15 @@ elif choice == "👟 Aktywność":
 elif choice == "💪 Trening":
     st.header("💪 Dziennik Treningowy")
     
+    db = SessionLocal()
+    from sqlalchemy import func
+    
+    # 1. Pobieramy unikalne nazwy ćwiczeń z bazy (znormalizowane)
+    # Wykorzystujemy func.distinct, żeby nie powtarzać nazw
+    existing_exercises = db.query(WorkoutLog.exercise_name).distinct().all()
+    # Czyszczenie listy: wyciągamy z krotek i sortujemy
+    exercise_options = sorted([ex[0] for ex in existing_exercises if ex[0]])
+    
     tabs = st.tabs(["📝 Dodaj ćwiczenie", "📈 Historia postępów"])
     
     with tabs[0]:
@@ -573,21 +582,35 @@ elif choice == "💪 Trening":
             col1, col2 = st.columns(2)
             
             with col1:
-                ex_name = st.text_input("Nazwa ćwiczenia", placeholder="np. Wyciskanie, Przysiad")
-                eq_type = st.selectbox("Rodzaj obciążenia", ["Masa własna", "Hantle", "Kettlebell", "Inne"])
+                # 2. Wybór istniejącego lub opcja dodania nowego
+                selection = st.selectbox(
+                    "Wybierz ćwiczenie", 
+                    ["-- Nowe ćwiczenie --"] + exercise_options
+                )
+                
+                # Jeśli wybrano "Nowe", pokazujemy pole tekstowe
+                if selection == "-- Nowe ćwiczenie --":
+                    ex_name = st.text_input("Wpisz nazwę nowego ćwiczenia", placeholder="np. Wyciskanie żołnierskie")
+                else:
+                    ex_name = selection
+                
+                eq_type = st.selectbox("Rodzaj obciążenia", ["Masa własna", "Hantle", "Kettlebell", "Sztanga", "Gumy", "Inne"])
             
             with col2:
                 weight = st.number_input("Ciężar (kg)", min_value=0.0, step=0.5)
                 reps = st.number_input("Liczba powtórzeń", min_value=1, step=1)
                 sets = st.number_input("Liczba serii", min_value=1, step=1)
                 
-            submit_workout = st.form_submit_button("🚀 Zapisz serię / ćwiczenie")
+            submit_workout = st.form_submit_button("🚀 Zapisz serię")
             
             if submit_workout:
                 if ex_name:
-                    db = SessionLocal()
+                    # 3. Normalizacja nazwy: usuwamy spacje i robimy dużą literę na początku
+                    # Dzięki temu "wyciskanie" i "Wyciskanie" będą traktowane jako to samo
+                    clean_name = ex_name.strip().capitalize()
+                    
                     new_ex = WorkoutLog(
-                        exercise_name=ex_name,
+                        exercise_name=clean_name,
                         equipment_type=eq_type,
                         weight_kg=weight,
                         reps=reps,
@@ -596,26 +619,22 @@ elif choice == "💪 Trening":
                     )
                     db.add(new_ex)
                     db.commit()
-                    db.close()
-                    st.success(f"Zapisano: {ex_name} - {sets}x{reps} ({weight}kg)")
+                    st.success(f"Zapisano: {clean_name}")
+                    st.rerun() # Odświeżamy, by nowe ćwiczenie wskoczyło na listę selectbox
                 else:
-                    st.error("Podaj nazwę ćwiczenia!")
+                    st.error("Musisz podać nazwę ćwiczenia!")
 
     with tabs[1]:
-        st.subheader("Twoja progresja")
-        db = SessionLocal()
-        # Pobieramy historię, grupując po nazwie ćwiczenia, by widzieć progres
-        logs = db.query(WorkoutLog).order_by(WorkoutLog.date.desc()).limit(20).all()
+        st.subheader("Ostatnie serie")
+        logs = db.query(WorkoutLog).order_by(WorkoutLog.date.desc()).limit(30).all()
         
         if logs:
             for l in logs:
-                with st.expander(f"📅 {l.date.strftime('%d.%m')} - {l.exercise_name}"):
+                with st.expander(f"📅 {l.date.strftime('%d.%m %H:%M')} - {l.exercise_name}"):
                     st.write(f"**Sprzęt:** {l.equipment_type}")
-                    st.write(f"**Wynik:** {l.sets} serii po {l.reps} powtórzeń")
-                    if l.weight_kg > 0:
-                        st.info(f"⚖️ Ciężar: {l.weight_kg} kg")
-                    else:
-                        st.info("💪 Masa własna ciała")
+                    st.write(f"**Wynik:** {l.sets} serii x {l.reps} powt.")
+                    st.info(f"⚖️ Obciążenie: {l.weight_kg} kg" if l.weight_kg > 0 else "💪 Masa ciała")
         else:
-            st.info("Brak zapisanych treningów. Czas na pierwszy wycisk!")
-        db.close()
+            st.info("Brak wpisów.")
+    
+    db.close()
