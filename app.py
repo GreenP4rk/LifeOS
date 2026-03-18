@@ -345,62 +345,86 @@ elif choice == "🍳 Nowy Posiłek":
                     st.rerun()
         db.close()
 
-# --- ➕ DODAJ BATCH (Z automatycznym liczeniem wagi) ---
+# --- ➕ DODAJ BATCH (Wersja z trwałą pamięcią) ---
 elif choice == "➕ Dodaj Batch":
-    st.header("📦 Gotowanie na zapas (Batch)")
+    st.header("📦 Gotowanie na zapas (Bezpieczny Zapis)")
     
-    if 'batch_pot' not in st.session_state:
-        st.session_state.batch_pot = []
+    # Inicjalizacja bazy
+    db = SessionLocal()
+    from sqlalchemy import text
 
-    b_name = st.text_input("Nazwa potrawy (np. Leczo)", placeholder="Wpisz nazwę całego dania...")
+    # Pobieramy aktualne składniki z bazy "szkiców"
+    drafts = db.execute(text("SELECT id, ingredient_name, weight, kcal FROM batch_drafts")).fetchall()
+
+    b_name = st.text_input("Nazwa potrawy (np. Bigos)", placeholder="Wpisz nazwę...")
     
     col_in, col_summary = st.columns([1, 1])
     
     with col_in:
-        st.markdown("### 🛒 Dodaj składnik do garnka")
+        st.markdown("### 🛒 Dodaj składnik")
         ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
         ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
         
-        if st.button("➕ Dodaj do garnka"):
+        if st.button("➕ Dodaj do bazy"):
             if ing_name and ing_weight > 0:
-                with st.spinner("Liczenie kalorii..."):
+                with st.spinner("Liczenie kalorii i zapisywanie szkicu..."):
                     kcal = get_calories_from_ai(ing_name, ing_weight)
-                    st.session_state.batch_pot.append({
-                        "name": ing_name,
-                        "weight": ing_weight,
-                        "kcal": kcal
-                    })
-                    st.rerun()
+                    # Zapisujemy bezpośrednio do tabeli szkiców
+                    db.execute(
+                        text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
+                        {"n": ing_name, "w": ing_weight, "k": kcal}
+                    )
+                    db.commit()
+                    st.rerun() # Odświeżamy, by pobrać nową listę
 
     with col_summary:
-        st.markdown("### 🥘 Podsumowanie garnka")
-        total_w = sum(item['weight'] for item in st.session_state.batch_pot)
-        total_k = sum(item['kcal'] for item in st.session_state.batch_pot)
+        st.markdown("### 🥘 Zawartość garnka")
         
-        for idx, item in enumerate(st.session_state.batch_pot):
-            st.text(f"{idx+1}. {item['name']} ({item['weight']}g)")
+        if not drafts:
+            st.info("Twój garnek jest pusty. Dodaj pierwszy składnik.")
+        else:
+            total_w = sum(d[2] for d in drafts)
+            total_k = sum(d[3] for d in drafts)
             
-        st.write(f"---")
-        st.write(f"**Waga całkowita:** {total_w:.0f} g")
-        st.write(f"**Kalorie całkowite:** {total_k:.0f} kcal")
-        
-        if st.button("💾 Zapisz do zamrażarki"):
-            if b_name and total_w > 0:
-                db = SessionLocal()
-                db.add(MealBatch(
-                    name=b_name, 
-                    original_weight_g=total_w, 
-                    current_weight_g=total_w, 
-                    total_calories=total_k
-                ))
-                db.commit()
-                db.close()
-                st.session_state.batch_pot = [] # czyścimy garnek
-                st.success(f"Danie '{b_name}' zapisane!")
-                st.rerun()
-            else:
-                st.warning("Podaj nazwę i dodaj składniki!")
+            for d in drafts:
+                c1, c2 = st.columns([4, 1])
+                c1.text(f"• {d[1]} ({d[2]}g)")
+                if c2.button("❌", key=f"del_draft_{d[0]}"):
+                    db.execute(text("DELETE FROM batch_drafts WHERE id = :id"), {"id": d[0]})
+                    db.commit()
+                    st.rerun()
+            
+            st.divider()
+            st.write(f"**Waga całkowita:** {total_w:.0f} g")
+            st.write(f"**Kalorie całkowite:** {total_k:.0f} kcal")
+            
+            if st.button("💾 ZAPISZ I ZAMROŹ"):
+                if b_name and total_w > 0:
+                    # 1. Tworzymy gotowy Batch
+                    db.add(MealBatch(
+                        name=b_name, 
+                        original_weight_g=total_w, 
+                        current_weight_g=total_w, 
+                        total_calories=total_k,
+                        date_prepared=datetime.now()
+                    ))
+                    # 2. Czyścimy tabelę szkiców (bardzo ważne!)
+                    db.execute(text("DELETE FROM batch_drafts"))
+                    db.commit()
+                    st.success(f"Danie '{b_name}' bezpiecznie zapisane!")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error("Podaj nazwę potrawy przed zapisem!")
 
+    # Przycisk bezpieczeństwa na dnie
+    if drafts:
+        if st.sidebar.button("🗑️ WYCZYŚĆ CAŁY GARNEK"):
+            db.execute(text("DELETE FROM batch_drafts"))
+            db.commit()
+            st.rerun()
+            
+    db.close()
 # --- 📦 ZAMRAŻARKA (Z opcją usuwania) ---
 elif choice == "📦 Zamrażarka":
     st.header("📦 Zawartość Zamrażarki")
