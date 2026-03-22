@@ -9,8 +9,7 @@ import plotly.graph_objects as go
 from datetime import timedelta
 from datetime import datetime
 import numpy as np
-# Zmień poprzedni import na ten:
-from google.genai.types import GenerateContentConfig, Tool, GoogleSearchRetrieval
+from google.genai.types import GenerateContentConfig, Tool, GoogleSearch
 
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
@@ -102,13 +101,24 @@ def get_live_promotions(location="Pszów"):
     try:
         # Pamiętaj o importach na górze pliku:
         # from google.genai.types import GenerateContentConfig, Tool, GoogleSearchRetrieval
+        try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",  # Zmieniamy z 3-flash na 2.5-flash
+            model="gemini-2.5-flash", 
             contents=search_prompt,
             config=GenerateContentConfig(
-                tools=[Tool(google_search_retrieval=GoogleSearchRetrieval())]
+                # TU ZMIANA: google_search zamiast google_search_retrieval
+                tools=[Tool(google_search=GoogleSearch())]
             )
         )
+        
+        if not response.text:
+            return []
+
+        # Reszta kodu bez zmian...
+        json_match = re.search(r"\[\s*\{.*\}\s*\]", response.text.replace("'", '"'), re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return []
         
         if not response.text:
             return []
