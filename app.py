@@ -83,11 +83,21 @@ def get_live_promotions(location="Pszów"):
     
     # Zaostrzamy prompt, żeby AI nie dodawało komentarzy
     search_prompt = f"""
-    DZISIAJ JEST {today}. Przeszukaj internet pod kątem AKTUALNYCH gazetek promocyjnych 
-    dla miasta {location} i okolic (Biedronka, Lidl, Kaufland, Netto).
-    Znajdź promocje na: Mięso, Nabiał, Warzywa/Owoce.
-    Zwróć WYŁĄCZNIE surowy kod JSON (lista obiektów). Nie pisz żadnego wstępu ani zakończenia.
-    Format: [{{"sklep": "nazwa", "produkt": "nazwa", "cena": "cena", "okres": "data"}}]
+    DZISIAJ JEST {today}. Jesteś precyzyjnym asystentem zakupowym. 
+    TWOJE ZADANIE: Znajdź MINIMUM 15-20 konkretnych promocji z aktualnych gazetek (marzec 2026) 
+    dla sklepów w okolicy Pszowa (Lidl, Biedronka, Kaufland, Netto).
+
+    INSTRUKCJE:
+    1. Ignoruj wyniki wyszukiwania starsze niż 3 dni. 
+    2. Szukaj fraz: "Biedronka gazetka od czwartku", "Lidl promocje od poniedziałku".
+    3. Skup się na: Mięso, Wędliny, Nabiał, Warzywa.
+    4. Dla każdego produktu MUSISZ zweryfikować, czy promocja obowiązuje w dniu {today}.
+
+    Zwróć WYŁĄCZNIE czysty JSON (lista obiektów):
+    [
+      {{"sklep": "Nazwa", "produkt": "Pełna nazwa produktu", "cena": "Cena + jednostka (np. 8.99 zł/kg)", "okres": "Data do kiedy"}}
+    ]
+    Nie dodawaj żadnego tekstu poza JSONem. Jeśli widzisz promocje "2+1" lub "z aplikacją", dopisz to w nazwie produktu.
     """
 
     try:
