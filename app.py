@@ -35,7 +35,7 @@ def get_calories_from_ai(ingredient_name, weight_g):
         st.error("Brak klucza API (GEMINI_KEY) w Secrets!")
         return 0.0
     
-        = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
+        prompt = f"""Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
     
     try:
         st.toast(f"🤖 AI liczy: {ingredient_name}...")
