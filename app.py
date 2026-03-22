@@ -39,7 +39,7 @@ def get_calories_from_ai(ingredient_name, weight_g):
     try:
         st.toast(f"🤖 AI liczy: {ingredient_name}...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash", 
+            model="gemini-2.5-flash", 
             contents=prompt
         )
         text = response.text.strip().replace(',', '.')
@@ -66,7 +66,7 @@ def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
     """
     try:
         st.toast("🤖 AI analizuje trening...")
-        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         text = response.text.strip().replace(',', '.')
         match = re.search(r"[-+]?\d*\.\d+|\d+", text)
         return float(match.group()) if match else 0.0
@@ -95,7 +95,7 @@ def get_live_promotions(location="Pszów"):
         # Pamiętaj o importach na górze pliku:
         # from google.genai.types import GenerateContentConfig, Tool, GoogleSearch
         response = client.models.generate_content(
-            model="gemini-2.0-flash", 
+            model="gemini-2.5-flash", 
             contents=search_prompt,
             config=GenerateContentConfig(
                 tools=[Tool(google_search=GoogleSearch())]
