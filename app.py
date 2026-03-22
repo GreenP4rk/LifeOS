@@ -79,6 +79,45 @@ def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
         st.error(f"Błąd AI przy treningu: {e}")
         return 0.0
 
+def get_live_promotions(location="Pszów"):
+    from datetime import datetime
+    today = datetime.now().strftime("%d-%m-%Y")
+    
+    # Prompt, który zmusza AI do bycia detektywem
+    search_prompt = f"""
+    DZISIAJ JEST {today}. Przeszukaj internet (Blix.pl, DING, strony sieci handlowych) 
+    pod kątem AKTUALNYCH gazetek promocyjnych dla miasta {location} (Biedronka, Lidl, Kaufland, Netto).
+    
+    Wyciągnij PROMOCJE z kategorii: 
+    1. Mięso (szukaj: schab, kurczak, wołowina, indyk)
+    2. Nabiał (szukaj: masło, sery, mleko)
+    3. Warzywa/Owoce (sezonowe okazje)
+
+    Zwróć dane WYŁĄCZNIE w formacie JSON (lista obiektów):
+    [
+      {{"sklep": "Nazwa", "produkt": "Nazwa produktu", "cena": "Cena", "okres": "Do kiedy"}},
+      ...
+    ]
+    Jeśli nie znajdziesz konkretnej ceny, pomiń produkt. Skup się na realnych hitach cenowych.
+    """
+
+    # Kluczowe: wywołanie z narzędziem 'google_search' (zależne od wersji biblioteki)
+    # Jeśli używasz nowej biblioteki google-genai:
+    response = client.models.generate_content(
+        model="gemini-2.0-flash", # To jest najszybszy model do szukania
+        contents=search_prompt,
+        config=GenerateContentConfig(
+            tools=[Tool(google_search=GoogleSearch())] # TO SPRAWIA ŻE AI WIDZI INTERNET
+        )
+    )
+    
+    # Wyciągamy JSON z tekstu (używając regex lub rstrip)
+    import re
+    json_match = re.search(r"\[.*\]", response.text, re.DOTALL)
+    if json_match:
+        return json.loads(json_match.group())
+    return []
+
 # --- 3. BAZA DANYCH - MODELE ---
 Base = declarative_base()
 
@@ -918,40 +957,27 @@ elif choice == "🛒 Lista Zakupów":
         st.rerun()
 
     st.divider()
-    st.subheader("🤖 AI Łowca Promocji")
+    st.subheader("🔥 Gorące Okazje w Twojej okolicy")
     
-    col_ai, col_loc = st.columns([2, 1])
-    target_shops = col_ai.multiselect("Sklepy", ["Biedronka", "Lidl", "Kaufland", "Netto", "Dino"], default=["Biedronka", "Lidl"])
-    location = col_loc.text_input("Twoja lokalizacja", value="Pszów")
-
-    if st.button("🔍 Znajdź najlepsze okazje"):
-        with st.spinner("Przeszukuję gazetki na Blix.pl i stronach sieci..."):
-            # Prompt dla Gemini z instrukcją szukania
-            prompt = f"""
-            Działaj jako asystent zakupowy. Przeszukaj internet (szczególnie Blix.pl oraz strony sieci {', '.join(target_shops)}) 
-            w poszukiwaniu aktualnych promocji (data: {datetime.now().date()}) dla lokalizacji {location}.
+    if st.button("🔍 Skanuj aktualne gazetki (LIVE)"):
+        with st.spinner("AI przegląda właśnie aktualne gazetki dla Pszowa..."):
+            promos = get_live_promotions("Pszów")
             
-            Znajdź po max 10-15 najlepszych artykułów w kategoriach:
-            1. Mięso i ryby
-            2. Wędliny
-            3. Nabiał i sery
-            4. Warzywa i owoce
-            
-            Zwróć wyniki w formie listy, podając: nazwę produktu, cenę, sklep i do kiedy trwa promocja.
-            Skup się na produktach sezonowych i dużych obniżkach (np. 1+1 gratis, -40%).
-            """
-            
-            # Wywołanie modelu z obsługą wyszukiwania
-            response = client.models.generate_content(
-                model="gemini-3-flash-preview", # Lub Pro, jeśli masz dostęp
-                contents=prompt
-            )
-            
-            st.markdown(response.text)
-            
-            # Opcjonalnie: Przycisk do szybkiego kopiowania do listy
-            st.info("💡 Możesz teraz skopiować wybrane produkty i wpisać je powyżej do listy zakupów.")
-            
+            if promos:
+                for p in promos:
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    col1.write(f"**{p['produkt']}** ({p['sklep']})")
+                    col2.write(f"💰 {p['cena']}")
+                    
+                    # MAGIA: Przycisk, który od razu dodaje promocję do Twojej bazy danych
+                    if col3.button("➕ Dodaj", key=f"add_promo_{p['produkt']}"):
+                        db = SessionLocal()
+                        db.add(ShoppingListItem(name=f"{p['produkt']} ({p['sklep']} - {p['cena']})"))
+                        db.commit()
+                        db.close()
+                        st.toast(f"Dodano {p['produkt']} do listy!")
+            else:
+                st.warning("Nie udało się pobrać danych. Spróbuj ponownie za chwilę.")
     db.close()
 
 # --- 🥫 SPIŻARNIA ---
