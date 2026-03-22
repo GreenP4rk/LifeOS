@@ -1,12 +1,13 @@
 import streamlit as st
 from google import genai
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import re
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import timedelta
+from datetime import datetime
 import numpy as np
 
 # --- 1. KONFIGURACJA STRONY ---
