@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from datetime import timedelta
 from datetime import datetime
 import numpy as np
+from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
