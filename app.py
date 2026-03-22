@@ -81,19 +81,16 @@ def get_live_promotions(location="Pszów"):
     
     today = datetime.now().strftime("%d-%m-%Y")
     
+    # Zaostrzamy prompt, żeby AI nie dodawało komentarzy
     search_prompt = f"""
     DZISIAJ JEST {today}. Przeszukaj internet pod kątem AKTUALNYCH gazetek promocyjnych 
     dla miasta {location} i okolic (Biedronka, Lidl, Kaufland, Netto).
     Znajdź promocje na: Mięso, Nabiał, Warzywa/Owoce.
-    Zwróć dane WYŁĄCZNIE jako listę JSON: 
-    [
-      {{"sklep": "nazwa", "produkt": "nazwa", "cena": "cena", "okres": "data"}}
-    ]
+    Zwróć WYŁĄCZNIE surowy kod JSON (lista obiektów). Nie pisz żadnego wstępu ani zakończenia.
+    Format: [{{"sklep": "nazwa", "produkt": "nazwa", "cena": "cena", "okres": "data"}}]
     """
 
     try:
-        # Pamiętaj o importach na górze pliku:
-        # from google.genai.types import GenerateContentConfig, Tool, GoogleSearch
         response = client.models.generate_content(
             model="gemini-2.5-flash", 
             contents=search_prompt,
@@ -105,14 +102,33 @@ def get_live_promotions(location="Pszów"):
         if not response.text:
             return []
 
-        # Wyciąganie JSONa
-        json_match = re.search(r"\[\s*\{.*\}\s*\]", response.text.replace("'", '"'), re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
+        # --- POTĘŻNE CZYSZCZENIE JSONA ---
+        raw_text = response.text.strip()
+        
+        # Usuwamy ewentualne znaczniki markdowna typu ```json ... ```
+        clean_text = re.sub(r"```json|```", "", raw_text)
+        
+        # Szukamy pierwszej klamry [ i ostatniej ]
+        start_idx = clean_text.find("[")
+        end_idx = clean_text.rfind("]")
+        
+        if start_idx != -1 and end_idx != -1:
+            json_content = clean_text[start_idx:end_idx+1]
+            # Podmieniamy polskie cudzysłowy i inne śmieci
+            json_content = json_content.replace('“', '"').replace('”', '"').replace("'", '"')
+            
+            try:
+                return json.loads(json_content)
+            except json.JSONDecodeError as e:
+                st.error(f"⚠️ AI wysłało błędny format danych. Próbuję naprawić... ({e})")
+                # Ostatnia deska ratunku: próba naprawy brakujących przecinków
+                fixed_json = re.sub(r'}\s*{', '},{', json_content)
+                return json.loads(fixed_json)
+        
         return []
 
     except Exception as e:
-        st.error(f"⚠️ Problem z połączeniem z wyszukiwarką: {str(e)}")
+        st.error(f"⚠️ Problem z połączeniem lub danymi: {str(e)}")
         return []
 
 # --- 3. BAZA DANYCH - MODELE ---
