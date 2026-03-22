@@ -382,9 +382,9 @@ elif choice == "🍳 Nowy Posiłek":
         db = SessionLocal()
         batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
         
-        if not batches:
+  if not batches:
             st.info("Twoja zamrażarka jest pusta.")
-        else:
+ else:
             # --- Sekcja wewnątrz pętli wyświetlającej batche (📦 Zamrażarka) ---
 
 with col_actions:
