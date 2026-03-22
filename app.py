@@ -916,6 +916,42 @@ elif choice == "🛒 Lista Zakupów":
         db.commit()
         st.success("Historia wyczyszczona.")
         st.rerun()
+
+    st.divider()
+    st.subheader("🤖 AI Łowca Promocji")
+    
+    col_ai, col_loc = st.columns([2, 1])
+    target_shops = col_ai.multiselect("Sklepy", ["Biedronka", "Lidl", "Kaufland", "Netto", "Dino"], default=["Biedronka", "Lidl"])
+    location = col_loc.text_input("Twoja lokalizacja", value="Pszów")
+
+    if st.button("🔍 Znajdź najlepsze okazje"):
+        with st.spinner("Przeszukuję gazetki na Blix.pl i stronach sieci..."):
+            # Prompt dla Gemini z instrukcją szukania
+            prompt = f"""
+            Działaj jako asystent zakupowy. Przeszukaj internet (szczególnie Blix.pl oraz strony sieci {', '.join(target_shops)}) 
+            w poszukiwaniu aktualnych promocji (data: {datetime.now().date()}) dla lokalizacji {location}.
+            
+            Znajdź po max 10-15 najlepszych artykułów w kategoriach:
+            1. Mięso i ryby
+            2. Wędliny
+            3. Nabiał i sery
+            4. Warzywa i owoce
+            
+            Zwróć wyniki w formie listy, podając: nazwę produktu, cenę, sklep i do kiedy trwa promocja.
+            Skup się na produktach sezonowych i dużych obniżkach (np. 1+1 gratis, -40%).
+            """
+            
+            # Wywołanie modelu z obsługą wyszukiwania
+            response = client.models.generate_content(
+                model="gemini-2.5-pro", # Lub Pro, jeśli masz dostęp
+                contents=prompt
+            )
+            
+            st.markdown(response.text)
+            
+            # Opcjonalnie: Przycisk do szybkiego kopiowania do listy
+            st.info("💡 Możesz teraz skopiować wybrane produkty i wpisać je powyżej do listy zakupów.")
+            
     db.close()
 
 # --- 🥫 SPIŻARNIA ---
