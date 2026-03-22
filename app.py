@@ -357,8 +357,9 @@ elif choice == "🍳 Nowy Posiłek":
             ing_weight = st.number_input("Waga (g)", min_value=0.0, key="fresh_w")
             if st.button("➕ Dodaj składnik"):
                 if ing_name and ing_weight > 0:
-                    kcal = get_calories_from_ai(ing_name, ing_weight)
-                    st.session_state.current_ingredients.append({'name': ing_name, 'weight': ing_weight, 'kcal': kcal})
+                    with st.spinner("Liczenie kalorii..."):
+                        kcal = get_calories_from_ai(ing_name, ing_weight)
+                        st.session_state.current_ingredients.append({'name': ing_name, 'weight': ing_weight, 'kcal': kcal})
                     st.rerun()
 
         with col_list:
@@ -369,10 +370,10 @@ elif choice == "🍳 Nowy Posiłek":
             
             if st.button("✅ Zapisz posiłek"):
                 db = SessionLocal()
-                db.add(MealLog(calories=total_kcal))
+                # Zapisujemy cały posiłek na podstawie dodanych składników
+                db.add(MealLog(name="Posiłek Składany", calories=total_kcal, date=datetime.now()))
                 db.commit()
                 db.close()
-                get_dashboard_data.clear()
                 st.session_state.current_ingredients = []
                 st.success("Zapisano w dzienniku!")
                 st.rerun()
@@ -382,67 +383,62 @@ elif choice == "🍳 Nowy Posiłek":
         db = SessionLocal()
         batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
         
-  if not batches:
+        if not batches:
             st.info("Twoja zamrażarka jest pusta.")
- else:
-            # --- Sekcja wewnątrz pętli wyświetlającej batche (📦 Zamrażarka) ---
+        else:
+            for batch in batches:
+                col_info, col_actions = st.columns([2, 2])
+                with col_info:
+                    st.write(f"**{batch.name}**")
+                    st.caption(f"Zostało: {batch.current_weight_g:.0f}g")
+                
+                with col_actions:
+                    # 1. Pole do wpisania konkretnej wagi
+                    eat_weight = st.number_input("Ile g?", min_value=0.0, max_value=float(batch.current_weight_g), key=f"eat_w_{batch.id}")
+                    
+                    c_btn1, c_btn2 = st.columns(2)
+                    with c_btn1:
+                        if st.button("🍽️ Zjedz porcję", key=f"btn_eat_p_{batch.id}"):
+                            if eat_weight > 0:
+                                kcal_per_g = batch.total_calories / batch.original_weight_g
+                                eaten_kcal = eat_weight * kcal_per_g
+                                
+                                batch.current_weight_g -= eat_weight
+                                
+                                new_meal = MealLog(
+                                    name=f"{batch.name} (Batch)",
+                                    calories=eaten_kcal,
+                                    date=datetime.now()
+                                )
+                                db.add(new_meal)
+                                db.commit()
+                                st.success(f"Smacznego! Log: {eaten_kcal:.0f} kcal")
+                                st.rerun()
 
-with col_actions:
-    # 1. Pole do wpisania konkretnej wagi
-    eat_weight = st.number_input("Ile g?", min_value=0.0, max_value=float(batch.current_weight_g), key=f"eat_w_{batch.id}")
-    
-    if st.button("🍽️ Zjedz porcję", key=f"btn_eat_p_{batch.id}"):
-        if eat_weight > 0:
-            # Obliczamy kalorie dla zjedzonej części
-            kcal_per_g = batch.total_calories / batch.original_weight_g
-            eaten_kcal = eat_weight * kcal_per_g
-            
-            # Aktualizujemy wagę w zamrażarce
-            batch.current_weight_g -= eat_weight
-            
-            # Dodajemy do logu posiłków
-            new_meal = MealLog(
-                name=f"{batch.name} (Batch)",
-                calories=eaten_kcal,
-                protein=0, fat=0, carbs=0, # Można rozwinąć o makro jeśli AI je liczyło
-                date=datetime.now()
-            )
-            db.add(new_meal)
-            db.commit()
-            st.success(f"Smacznego! Log: {eaten_kcal:.0f} kcal")
-            st.rerun()
+                    with c_btn2:
+                        if st.button("🗑️ Zjedz całość", key=f"btn_all_{batch.id}", help="Usuwa danie i dodaje resztę kalorii do bilansu"):
+                            kcal_per_g = batch.total_calories / batch.original_weight_g
+                            remaining_kcal = batch.current_weight_g * kcal_per_g
+                            
+                            full_meal = MealLog(
+                                name=f"{batch.name} (Koniec Batcha)",
+                                calories=remaining_kcal,
+                                date=datetime.now()
+                            )
+                            db.add(full_meal)
+                            db.delete(batch)
+                            db.commit() 
+                            st.toast(f"Wymieciono do czysta! +{remaining_kcal:.0f} kcal")
+                            st.rerun()
+        db.close()
 
-    # 2. NAPRAWIONY PRZYCISK: Zjedz całość
-    if st.button("🗑️ Zjedz całość", key=f"btn_all_{batch.id}", help="Usuwa danie i dodaje resztę kalorii do bilansu"):
-        # Obliczamy kalorie dla tego, co ZOSTAŁO w pudełku
-        kcal_per_g = batch.total_calories / batch.original_weight_g
-        remaining_kcal = batch.current_weight_g * kcal_per_g
-        
-        # Dodajemy log posiłku
-        full_meal = MealLog(
-            name=f"{batch.name} (Koniec Batcha)",
-            calories=remaining_kcal,
-            date=datetime.now()
-        )
-        db.add(full_meal)
-        
-        # Usuwamy batch z bazy danych
-        db.delete(batch)
-        
-        # Kluczowe: Commit i Rerun
-        db.commit() 
-        st.toast(f"Wymieciono do czysta! +{remaining_kcal:.0f} kcal")
-        st.rerun() # To wymusza odświeżenie listy zamrażarki
-
-# --- ➕ DODAJ BATCH (Wersja z trwałą pamięcią) ---
+# --- ➕ DODAJ BATCH (Wersja ze spiżarnią) ---
 elif choice == "➕ Dodaj Batch":
     st.header("📦 Gotowanie na zapas (Bezpieczny Zapis)")
     
-    # Inicjalizacja bazy
     db = SessionLocal()
     from sqlalchemy import text
 
-    # Pobieramy aktualne składniki z bazy "szkiców"
     drafts = db.execute(text("SELECT id, ingredient_name, weight, kcal FROM batch_drafts")).fetchall()
 
     b_name = st.text_input("Nazwa potrawy (np. Bigos)", placeholder="Wpisz nazwę...")
@@ -450,53 +446,48 @@ elif choice == "➕ Dodaj Batch":
     col_in, col_summary = st.columns([1, 1])
     
     with col_in:
-        # Zamiast zwykłego text_input w sekcji 'Dodaj Batch':
-    st.markdown("### 🛒 Dodaj składnik")
-    
-    source_type = st.radio("Źródło składnika", ["Z zewnątrz (sklep/ręcznie)", "Ze spiżarni"], horizontal=True)
-    
-    if source_type == "Ze spiżarni":
-        # Pobieramy to co mamy w spiżarni
-        available_items = db.execute(text("SELECT id, name, weight_g FROM pantry_items WHERE weight_g > 0")).fetchall()
-        if available_items:
-            item_options = {f"{i[1]} (Zostało: {i[2]}g)": i for i in available_items}
-            selected_label = st.selectbox("Wybierz produkt", list(item_options.keys()))
-            selected_item = item_options[selected_label]
+        st.markdown("### 🛒 Dodaj składnik")
+        
+        source_type = st.radio("Źródło składnika", ["Z zewnątrz (sklep/ręcznie)", "Ze spiżarni"], horizontal=True)
+        
+        if source_type == "Ze spiżarni":
+            available_items = db.execute(text("SELECT id, name, weight_g FROM pantry_items WHERE weight_g > 0")).fetchall()
+            if available_items:
+                item_options = {f"{i[1]} (Zostało: {i[2]}g)": i for i in available_items}
+                selected_label = st.selectbox("Wybierz produkt", list(item_options.keys()))
+                selected_item = item_options[selected_label]
+                
+                ing_name = selected_item[1]
+                ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item[2]), key="pantry_w")
+                
+                if st.button("➕ Dodaj do garnka i odejmij ze spiżarni"):
+                    if ing_weight > 0:
+                        with st.spinner("Liczenie kalorii..."):
+                            kcal = get_calories_from_ai(ing_name, ing_weight)
+                            db.execute(
+                                text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
+                                {"n": ing_name, "w": ing_weight, "k": kcal}
+                            )
+                            db.execute(text("UPDATE pantry_items SET weight_g = weight_g - :w WHERE id = :id"), {"w": ing_weight, "id": selected_item[0]})
+                            db.commit()
+                            st.rerun()
+            else:
+                st.warning("Brak produktów w spiżarni!")
+                
+        else:
+            ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
+            ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
             
-            ing_name = selected_item[1]
-            ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item[2]), key="pantry_w")
-            
-            if st.button("➕ Dodaj do garnka i odejmij ze spiżarni"):
-                if ing_weight > 0:
+            if st.button("➕ Dodaj do garnka"):
+                if ing_name and ing_weight > 0:
                     with st.spinner("Liczenie kalorii..."):
                         kcal = get_calories_from_ai(ing_name, ing_weight)
-                        # Zapisz do szkicu garnka
                         db.execute(
                             text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
                             {"n": ing_name, "w": ing_weight, "k": kcal}
                         )
-                        # Odejmij ze spiżarni
-                        db.execute(text("UPDATE pantry_items SET weight_g = weight_g - :w WHERE id = :id"), {"w": ing_weight, "id": selected_item[0]})
                         db.commit()
                         st.rerun()
-        else:
-            st.warning("Brak produktów w spiżarni!")
-            
-    else:
-        # Klasyczne wpisywanie ręczne (Twój dotychczasowy kod)
-        ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
-        ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
-        
-        if st.button("➕ Dodaj do garnka"):
-            if ing_name and ing_weight > 0:
-                with st.spinner("Liczenie kalorii..."):
-                    kcal = get_calories_from_ai(ing_name, ing_weight)
-                    db.execute(
-                        text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
-                        {"n": ing_name, "w": ing_weight, "k": kcal}
-                    )
-                    db.commit()
-                    st.rerun()
         
     with col_summary:
         st.markdown("### 🥘 Zawartość garnka")
@@ -521,7 +512,6 @@ elif choice == "➕ Dodaj Batch":
             
             if st.button("💾 ZAPISZ I ZAMROŹ"):
                 if b_name and total_w > 0:
-                    # 1. Tworzymy gotowy Batch
                     db.add(MealBatch(
                         name=b_name, 
                         original_weight_g=total_w, 
@@ -529,7 +519,6 @@ elif choice == "➕ Dodaj Batch":
                         total_calories=total_k,
                         date_prepared=datetime.now()
                     ))
-                    # 2. Czyścimy tabelę szkiców (bardzo ważne!)
                     db.execute(text("DELETE FROM batch_drafts"))
                     db.commit()
                     st.success(f"Danie '{b_name}' bezpiecznie zapisane!")
@@ -538,7 +527,6 @@ elif choice == "➕ Dodaj Batch":
                 else:
                     st.error("Podaj nazwę potrawy przed zapisem!")
 
-    # Przycisk bezpieczeństwa na dnie
     if drafts:
         if st.sidebar.button("🗑️ WYCZYŚĆ CAŁY GARNEK"):
             db.execute(text("DELETE FROM batch_drafts"))
@@ -546,6 +534,7 @@ elif choice == "➕ Dodaj Batch":
             st.rerun()
             
     db.close()
+
 # --- 📦 ZAMRAŻARKA (Z opcją usuwania) ---
 elif choice == "📦 Zamrażarka":
     st.header("📦 Zawartość Zamrażarki")
@@ -562,7 +551,6 @@ elif choice == "📦 Zamrażarka":
                 st.caption(f"Pozostało: {b.current_weight_g:.0f}g z {b.original_weight_g:.0f}g")
             with col2:
                 if st.button("🗑️ Usuń", key=f"del_{b.id}"):
-                    # Miękkie usuwanie (ustawienie wagi na 0)
                     target = db.query(MealBatch).filter_by(id=b.id).first()
                     target.current_weight_g = 0
                     db.commit()
@@ -570,10 +558,10 @@ elif choice == "📦 Zamrażarka":
             st.divider()
     db.close()
 
+# --- 👟 AKTYWNOŚĆ ---
 elif choice == "👟 Aktywność":
     st.header("👟 Monitoring Aktywności")
     
-    # Inicjalizacja pamięci sesji dla wyniku analizy
     if 'walk_data' not in st.session_state:
         st.session_state.walk_data = None
 
@@ -590,9 +578,10 @@ elif choice == "👟 Aktywność":
                 with st.spinner("Gemini analizuje tętno i kalorie aktywne..."):
                     try:
                         import PIL.Image
+                        import json
+                        import re
                         img = PIL.Image.open(uploaded_file)
                         
-                        # Zaktualizowany prompt - nacisk na KALORIE AKTYWNE
                         prompt = """
                         Zanalizuj zrzut ekranu z Apple Fitness. 
                         Wyciągnij dane i zwróć TYLKO JSON:
@@ -611,8 +600,6 @@ elif choice == "👟 Aktywność":
                             contents=[prompt, img]
                         )
                         
-                        import json
-                        # Wyciąganie JSON-a z tekstu
                         clean_json = re.search(r"\{.*\}", response.text, re.DOTALL).group()
                         st.session_state.walk_data = json.loads(clean_json)
                         st.success("Analiza zakończona! Sprawdź dane poniżej.")
@@ -620,7 +607,6 @@ elif choice == "👟 Aktywność":
                     except Exception as e:
                         st.error(f"Błąd analizy: {e}")
 
-        # Wyświetlanie wyniku z sesji (jeśli istnieje) i przycisk zapisu
         if st.session_state.walk_data:
             d = st.session_state.walk_data
             st.markdown("---")
@@ -645,9 +631,7 @@ elif choice == "👟 Aktywność":
                     db.commit()
                     db.close()
                     
-                    # Czyścimy sesję po zapisie
                     st.session_state.walk_data = None
-                    get_dashboard_data.clear() # Czyścimy cache dashboardu
                     st.success("Spacer zapisany! Bilans kalorii został zaktualizowany.")
                     st.balloons()
                     st.rerun()
@@ -661,7 +645,6 @@ elif choice == "👟 Aktywność":
             db.add(ActivityLog(steps=manual_steps, calories_burned=manual_steps * 0.04))
             db.commit()
             db.close()
-            get_dashboard_data.clear()
             st.success("Zapisano kroki!")
 
     with tabs[2]:
