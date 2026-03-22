@@ -370,42 +370,54 @@ elif choice == "🍳 Nowy Posiłek":
         if not batches:
             st.info("Twoja zamrażarka jest pusta.")
         else:
-            # Lista dostępnych dań
-            batch_options = {f"{b.name} (Zostało: {b.current_weight_g:.0f}g)": b for b in batches}
-            selected_label = st.selectbox("Co wyciągasz?", list(batch_options.keys()))
-            selected_batch = batch_options[selected_label]
-            
-            col_a, col_b = st.columns(2)
-            with col_a:
-                weight_to_eat = st.number_input("Ile gramów nakładasz?", 
-                                                min_value=0.0, 
-                                                max_value=float(selected_batch.current_weight_g), 
-                                                step=50.0)
-            with col_b:
-                st.write("") # wyrównanie do przycisku
-                st.write("") 
-                if st.button("🍴 Zjedz całość"):
-                    weight_to_eat = selected_batch.current_weight_g
+            # --- Sekcja wewnątrz pętli wyświetlającej batche (📦 Zamrażarka) ---
 
-            if weight_to_eat > 0:
-                # Proporcjonalne liczenie kcal: (Total Kcal / Original Weight) * Portion Weight
-                portion_kcal = (selected_batch.total_calories / selected_batch.original_weight_g) * weight_to_eat
-                st.info(f"Ta porcja ma ok. **{portion_kcal:.0f} kcal**")
-                
-                if st.button("✅ Potwierdź zjedzenie"):
-                    # 1. Odejmij wagę z zamrażarki
-                    target = db.query(MealBatch).filter_by(id=selected_batch.id).first()
-                    target.current_weight_g -= weight_to_eat
-                    
-                    # 2. Dodaj kalorie do dziennika (MealLog)
-                    db.add(MealLog(calories=portion_kcal))
-                    
-                    db.commit()
-                    db.close()
-                    get_dashboard_data.clear()
-                    st.success("Smacznego! Posiłek odliczony od zapasów i dodany do bilansu.")
-                    st.rerun()
-        db.close()
+with col_actions:
+    # 1. Pole do wpisania konkretnej wagi
+    eat_weight = st.number_input("Ile g?", min_value=0.0, max_value=float(batch.current_weight_g), key=f"eat_w_{batch.id}")
+    
+    if st.button("🍽️ Zjedz porcję", key=f"btn_eat_p_{batch.id}"):
+        if eat_weight > 0:
+            # Obliczamy kalorie dla zjedzonej części
+            kcal_per_g = batch.total_calories / batch.original_weight_g
+            eaten_kcal = eat_weight * kcal_per_g
+            
+            # Aktualizujemy wagę w zamrażarce
+            batch.current_weight_g -= eat_weight
+            
+            # Dodajemy do logu posiłków
+            new_meal = MealLog(
+                name=f"{batch.name} (Batch)",
+                calories=eaten_kcal,
+                protein=0, fat=0, carbs=0, # Można rozwinąć o makro jeśli AI je liczyło
+                date=datetime.now()
+            )
+            db.add(new_meal)
+            db.commit()
+            st.success(f"Smacznego! Log: {eaten_kcal:.0f} kcal")
+            st.rerun()
+
+    # 2. NAPRAWIONY PRZYCISK: Zjedz całość
+    if st.button("🗑️ Zjedz całość", key=f"btn_all_{batch.id}", help="Usuwa danie i dodaje resztę kalorii do bilansu"):
+        # Obliczamy kalorie dla tego, co ZOSTAŁO w pudełku
+        kcal_per_g = batch.total_calories / batch.original_weight_g
+        remaining_kcal = batch.current_weight_g * kcal_per_g
+        
+        # Dodajemy log posiłku
+        full_meal = MealLog(
+            name=f"{batch.name} (Koniec Batcha)",
+            calories=remaining_kcal,
+            date=datetime.now()
+        )
+        db.add(full_meal)
+        
+        # Usuwamy batch z bazy danych
+        db.delete(batch)
+        
+        # Kluczowe: Commit i Rerun
+        db.commit() 
+        st.toast(f"Wymieciono do czysta! +{remaining_kcal:.0f} kcal")
+        st.rerun() # To wymusza odświeżenie listy zamrażarki
 
 # --- ➕ DODAJ BATCH (Wersja z trwałą pamięcią) ---
 elif choice == "➕ Dodaj Batch":
