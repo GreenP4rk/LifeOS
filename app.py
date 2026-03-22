@@ -20,6 +20,7 @@ st.set_page_config(page_title="LifeOS", layout="wide")
 def init_genai():
     try:
         if "GEMINI_KEY" in st.secrets:
+            # Upewnij się, że na górze masz: from google import genai
             api_key = st.secrets["GEMINI_KEY"]
             return genai.Client(api_key=api_key)
         else:
@@ -35,12 +36,12 @@ def get_calories_from_ai(ingredient_name, weight_g):
         st.error("Brak klucza API (GEMINI_KEY) w Secrets!")
         return 0.0
     
-        prompt = f""Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
+    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
     
     try:
         st.toast(f"🤖 AI liczy: {ingredient_name}...")
         response = client.models.generate_content(
-            model="gemini-2.5-flash", 
+            model="gemini-2.0-flash", 
             contents=prompt
         )
         # Czyszczenie odpowiedzi i wyciąganie liczby
@@ -99,8 +100,8 @@ def get_live_promotions(location="Pszów"):
     """
 
     try:
-        # Używamy modelu Gemini 3 Flash (skoro na nim teraz pracujemy)
-        # i poprawionej struktury GoogleSearchRetrieval
+        # Pamiętaj o importach na górze pliku:
+        # from google.genai.types import GenerateContentConfig, Tool, GoogleSearchRetrieval
         response = client.models.generate_content(
             model="gemini-3-flash", 
             contents=search_prompt,
@@ -112,13 +113,13 @@ def get_live_promotions(location="Pszów"):
         if not response.text:
             return []
 
-        json_match = re.search(r"\[.*\]", response.text, re.DOTALL)
+        # Mała poprawka re.search, aby lepiej radził sobie z formatowaniem AI
+        json_match = re.search(r"\[\s*\{.*\}\s*\]", response.text.replace("'", '"'), re.DOTALL)
         if json_match:
             return json.loads(json_match.group())
         return []
 
     except Exception as e:
-        # To sprawi, że błąd pojawi się w konsoli, ale aplikacja będzie działać dalej
         st.error(f"⚠️ Problem z połączeniem z wyszukiwarką: {str(e)}")
         return []
 
