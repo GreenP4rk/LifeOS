@@ -102,7 +102,7 @@ def get_live_promotions(location="Pszów"):
 
     try:
         response = client.models.generate_content(
-            model="gemini-3-flash", 
+            model="gemini-3-flash-preview", 
             contents=search_prompt,
             config=GenerateContentConfig(
                 tools=[Tool(google_search=GoogleSearch())]
