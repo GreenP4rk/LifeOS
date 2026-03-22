@@ -81,26 +81,33 @@ def get_live_promotions(location="Pszów"):
     
     today = datetime.now().strftime("%d-%m-%Y")
     
-    # Zaostrzamy prompt, żeby AI nie dodawało komentarzy
+    # Skupiamy się TYLKO na oficjalnych stronach i konkretnych kategoriach
     search_prompt = f"""
-    DZISIAJ JEST {today}. Jesteś precyzyjnym asystentem zakupowym. 
-    TWOJE ZADANIE: Znajdź MINIMUM 15-20 konkretnych promocji z aktualnych gazetek (marzec 2026) 
-    dla sklepów w okolicy Pszowa (Lidl, Biedronka, Kaufland, Netto).
+    DZISIAJ JEST {today}. Jesteś ekspertem od oszczędzania. 
+    PRZESZUKAJ WYŁĄCZNIE OFICJALNE STRONY: biedronka.pl oraz lidl.pl.
+    
+    TWOJE ZADANIE: 
+    Znajdź aktualne gazetki promocyjne (od dzisiaj lub najbliższego poniedziałku/czwartku).
+    Wyciągnij minimum po 15 produktów z Biedronki i 15 z Lidla z kategorii:
+    1. MIĘSO I RYBY (np. schab, pierś z kurczaka, mielone, łosoś)
+    2. NABIAŁ (masło, sery żółte, twarogi, mleko)
+    3. WARZYWA I OWOCE (sezonowe okazje)
 
-    INSTRUKCJE:
-    1. Ignoruj wyniki wyszukiwania starsze niż 3 dni. 
-    2. Szukaj fraz: "Biedronka gazetka od czwartku", "Lidl promocje od poniedziałku".
-    3. Skup się na: Mięso, Wędliny, Nabiał, Warzywa.
-    4. Dla każdego produktu MUSISZ zweryfikować, czy promocja obowiązuje w dniu {today}.
+    Dla każdego produktu podaj:
+    - sklep (Biedronka lub Lidl)
+    - pełna nazwa (np. "Schab wieprzowy bez kości Kraina Mięs")
+    - cena (np. "9.99 zł/kg" lub "2+1 gratis")
+    - okres obowiązywania
 
-    Zwróć WYŁĄCZNIE czysty JSON (lista obiektów):
+    Zwróć dane WYŁĄCZNIE jako surowy JSON:
     [
-      {{"sklep": "Nazwa", "produkt": "Pełna nazwa produktu", "cena": "Cena + jednostka (np. 8.99 zł/kg)", "okres": "Data do kiedy"}}
+      {{"sklep": "Biedronka", "produkt": "Nazwa", "cena": "Cena", "okres": "Data"}}
     ]
-    Nie dodawaj żadnego tekstu poza JSONem. Jeśli widzisz promocje "2+1" lub "z aplikacją", dopisz to w nazwie produktu.
+    Nie pisz żadnego wstępu. Jeśli nie widzisz cen na stronie, szukaj w sekcji 'Gazetki'.
     """
 
     try:
+        # Używamy Twojej działającej wersji 2.5-flash
         response = client.models.generate_content(
             model="gemini-2.5-flash", 
             contents=search_prompt,
@@ -112,33 +119,20 @@ def get_live_promotions(location="Pszów"):
         if not response.text:
             return []
 
-        # --- POTĘŻNE CZYSZCZENIE JSONA ---
+        # Czyszczenie i parsowanie JSON
         raw_text = response.text.strip()
-        
-        # Usuwamy ewentualne znaczniki markdowna typu ```json ... ```
         clean_text = re.sub(r"```json|```", "", raw_text)
-        
-        # Szukamy pierwszej klamry [ i ostatniej ]
         start_idx = clean_text.find("[")
         end_idx = clean_text.rfind("]")
         
         if start_idx != -1 and end_idx != -1:
             json_content = clean_text[start_idx:end_idx+1]
-            # Podmieniamy polskie cudzysłowy i inne śmieci
-            json_content = json_content.replace('“', '"').replace('”', '"').replace("'", '"')
-            
-            try:
-                return json.loads(json_content)
-            except json.JSONDecodeError as e:
-                st.error(f"⚠️ AI wysłało błędny format danych. Próbuję naprawić... ({e})")
-                # Ostatnia deska ratunku: próba naprawy brakujących przecinków
-                fixed_json = re.sub(r'}\s*{', '},{', json_content)
-                return json.loads(fixed_json)
+            return json.loads(json_content.replace('“', '"').replace('”', '"'))
         
         return []
 
     except Exception as e:
-        st.error(f"⚠️ Problem z połączeniem lub danymi: {str(e)}")
+        st.error(f"⚠️ Problem z połączeniem: {str(e)}")
         return []
 
 # --- 3. BAZA DANYCH - MODELE ---
