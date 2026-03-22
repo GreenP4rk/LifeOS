@@ -19,7 +19,6 @@ st.set_page_config(page_title="LifeOS", layout="wide")
 def init_genai():
     try:
         if "GEMINI_KEY" in st.secrets:
-            # Upewnij się, że na górze masz: from google import genai
             api_key = st.secrets["GEMINI_KEY"]
             return genai.Client(api_key=api_key)
         else:
@@ -43,7 +42,6 @@ def get_calories_from_ai(ingredient_name, weight_g):
             model="gemini-2.0-flash", 
             contents=prompt
         )
-        # Czyszczenie odpowiedzi i wyciąganie liczby
         text = response.text.strip().replace(',', '.')
         match = re.search(r"[-+]?\d*\.\d+|\d+", text)
         
@@ -52,7 +50,6 @@ def get_calories_from_ai(ingredient_name, weight_g):
             st.toast(f"✅ Obliczono: {kcal} kcal")
             return kcal
         else:
-            st.warning(f"AI zwróciło tekst zamiast liczby: {text}")
             return 0.0
     except Exception as e:
         st.error(f"⚠️ Błąd podczas zapytania AI: {e}")
@@ -63,20 +60,16 @@ def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
         return 0.0
     
     prompt = f"""
-    Użytkownik o wadze {weight_kg} kg i wzroście {height_cm} cm wykonał dzisiaj następujący trening siłowy:
+    Użytkownik o wadze {weight_kg} kg i wzroście {height_cm} cm wykonał trening:
     {workout_summary}
-    
-    Oszacuj całkowitą liczbę spalonych kalorii podczas tego treningu, biorąc pod uwagę jego parametry ciała, objętość treningową i ciężary. 
-    Zwróć TYLKO samą liczbę (bez tekstu, bez jednostek, np. 350).
+    Zwróć TYLKO samą liczbę spalonych kalorii.
     """
     try:
-        st.toast("🤖 AI analizuje Twój trening i parametry...")
-        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        st.toast("🤖 AI analizuje trening...")
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         text = response.text.strip().replace(',', '.')
         match = re.search(r"[-+]?\d*\.\d+|\d+", text)
-        if match:
-            return float(match.group())
-        return 0.0
+        return float(match.group()) if match else 0.0
     except Exception as e:
         st.error(f"Błąd AI przy treningu: {e}")
         return 0.0
@@ -92,7 +85,7 @@ def get_live_promotions(location="Pszów"):
     DZISIAJ JEST {today}. Przeszukaj internet pod kątem AKTUALNYCH gazetek promocyjnych 
     dla miasta {location} i okolic (Biedronka, Lidl, Kaufland, Netto).
     Znajdź promocje na: Mięso, Nabiał, Warzywa/Owoce.
-    Zwróć dane WYŁĄCZNIE jako listę JSON w formacie: 
+    Zwróć dane WYŁĄCZNIE jako listę JSON: 
     [
       {{"sklep": "nazwa", "produkt": "nazwa", "cena": "cena", "okres": "data"}}
     ]
@@ -100,30 +93,19 @@ def get_live_promotions(location="Pszów"):
 
     try:
         # Pamiętaj o importach na górze pliku:
-        # from google.genai.types import GenerateContentConfig, Tool, GoogleSearchRetrieval
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash", 
-                contents=search_prompt,
-                config=GenerateContentConfig(
-                    # TU ZMIANA: google_search zamiast google_search_retrieval
-                    tools=[Tool(google_search=GoogleSearch())]
-                )
+        # from google.genai.types import GenerateContentConfig, Tool, GoogleSearch
+        response = client.models.generate_content(
+            model="gemini-2.0-flash", 
+            contents=search_prompt,
+            config=GenerateContentConfig(
+                tools=[Tool(google_search=GoogleSearch())]
             )
+        )
         
         if not response.text:
             return []
 
-        # Reszta kodu bez zmian...
-        json_match = re.search(r"\[\s*\{.*\}\s*\]", response.text.replace("'", '"'), re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
-        return []
-        
-        if not response.text:
-            return []
-
-        # Mała poprawka re.search, aby lepiej radził sobie z formatowaniem AI
+        # Wyciąganie JSONa
         json_match = re.search(r"\[\s*\{.*\}\s*\]", response.text.replace("'", '"'), re.DOTALL)
         if json_match:
             return json.loads(json_match.group())
