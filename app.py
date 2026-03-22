@@ -9,7 +9,8 @@ import plotly.graph_objects as go
 from datetime import timedelta
 from datetime import datetime
 import numpy as np
-from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
+# Zmień poprzedni import na ten:
+from google.genai.types import GenerateContentConfig, Tool, GoogleSearchRetrieval
 
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
@@ -82,42 +83,41 @@ def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
 
 def get_live_promotions(location="Pszów"):
     from datetime import datetime
+    import json
+    import re
+    
     today = datetime.now().strftime("%d-%m-%Y")
     
-    # Prompt, który zmusza AI do bycia detektywem
     search_prompt = f"""
-    DZISIAJ JEST {today}. Przeszukaj internet (Blix.pl, DING, strony sieci handlowych) 
-    pod kątem AKTUALNYCH gazetek promocyjnych dla miasta {location} (Biedronka, Lidl, Kaufland, Netto).
-    
-    Wyciągnij PROMOCJE z kategorii: 
-    1. Mięso (szukaj: schab, kurczak, wołowina, indyk)
-    2. Nabiał (szukaj: masło, sery, mleko)
-    3. Warzywa/Owoce (sezonowe okazje)
-
-    Zwróć dane WYŁĄCZNIE w formacie JSON (lista obiektów):
-    [
-      {{"sklep": "Nazwa", "produkt": "Nazwa produktu", "cena": "Cena", "okres": "Do kiedy"}},
-      ...
-    ]
-    Jeśli nie znajdziesz konkretnej ceny, pomiń produkt. Skup się na realnych hitach cenowych.
+    DZISIAJ JEST {today}. Przeszukaj internet pod kątem AKTUALNYCH gazetek promocyjnych 
+    dla miasta {location} i okolic (Biedronka, Lidl, Kaufland, Netto).
+    Znajdź promocje na: Mięso, Nabiał, Warzywa/Owoce.
+    Zwróć dane WYŁĄCZNIE jako listę JSON: [{"sklep": "", "produkt": "", "cena": "", "okres": ""}]
     """
 
-    # Kluczowe: wywołanie z narzędziem 'google_search' (zależne od wersji biblioteki)
-    # Jeśli używasz nowej biblioteki google-genai:
-    response = client.models.generate_content(
-        model="gemini-2.0-flash", # To jest najszybszy model do szukania
-        contents=search_prompt,
-        config=GenerateContentConfig(
-            tools=[Tool(google_search=GoogleSearch())] # TO SPRAWIA ŻE AI WIDZI INTERNET
+    try:
+        # Używamy modelu Gemini 3 Flash (skoro na nim teraz pracujemy)
+        # i poprawionej struktury GoogleSearchRetrieval
+        response = client.models.generate_content(
+            model="gemini-3-flash", 
+            contents=search_prompt,
+            config=GenerateContentConfig(
+                tools=[Tool(google_search_retrieval=GoogleSearchRetrieval())]
+            )
         )
-    )
-    
-    # Wyciągamy JSON z tekstu (używając regex lub rstrip)
-    import re
-    json_match = re.search(r"\[.*\]", response.text, re.DOTALL)
-    if json_match:
-        return json.loads(json_match.group())
-    return []
+        
+        if not response.text:
+            return []
+
+        json_match = re.search(r"\[.*\]", response.text, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return []
+
+    except Exception as e:
+        # To sprawi, że błąd pojawi się w konsoli, ale aplikacja będzie działać dalej
+        st.error(f"⚠️ Problem z połączeniem z wyszukiwarką: {str(e)}")
+        return []
 
 # --- 3. BAZA DANYCH - MODELE ---
 Base = declarative_base()
