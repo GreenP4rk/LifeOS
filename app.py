@@ -35,7 +35,7 @@ def get_calories_from_ai(ingredient_name, weight_g):
         st.error("Brak klucza API (GEMINI_KEY) w Secrets!")
         return 0.0
     
-    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
+     = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
     
     try:
         st.toast(f"🤖 AI liczy: {ingredient_name}...")
@@ -92,7 +92,10 @@ def get_live_promotions(location="Pszów"):
     DZISIAJ JEST {today}. Przeszukaj internet pod kątem AKTUALNYCH gazetek promocyjnych 
     dla miasta {location} i okolic (Biedronka, Lidl, Kaufland, Netto).
     Znajdź promocje na: Mięso, Nabiał, Warzywa/Owoce.
-    Zwróć dane WYŁĄCZNIE jako listę JSON: [{"sklep": "", "produkt": "", "cena": "", "okres": ""}]
+    Zwróć dane WYŁĄCZNIE jako listę JSON w formacie: 
+    [
+      {{"sklep": "nazwa", "produkt": "nazwa", "cena": "cena", "okres": "data"}}
+    ]
     """
 
     try:
