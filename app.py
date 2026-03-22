@@ -144,6 +144,21 @@ class BodyMeasurement(Base):
     thigh = Column(Float)
     biceps = Column(Float)
 
+class PantryItem(Base):
+    __tablename__ = 'pantry_items'
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    weight_g = Column(Float, nullable=False)
+    kcal_per_100g = Column(Float)
+    date_added = Column(DateTime, default=datetime.now)
+
+class ShoppingListItem(Base):
+    __tablename__ = 'shopping_list'
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    is_bought = Column(Boolean, default=False)
+    date_added = Column(DateTime, default=datetime.now)
+    
 # --- 4. BAZA DANYCH - POŁĄCZENIE ---
 @st.cache_resource
 def init_db_engine():
@@ -211,7 +226,7 @@ def set_daily_limit(new_limit):
 # --- 6. NAWIGACJA ---
 st.sidebar.title("🧭 Menu LifeOS")
 choice = st.sidebar.radio("Przejdź do:", 
-    ["🏠 Dashboard", "📏 Pomiary", "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność", "💪 Trening"])
+    ["🏠 Dashboard", "🛒 Lista Zakupów", "🥫 Spiżarnia", "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność", "💪 Trening", "📏 Pomiary"])
 
 st.sidebar.markdown("---")
 
@@ -435,22 +450,54 @@ elif choice == "➕ Dodaj Batch":
     col_in, col_summary = st.columns([1, 1])
     
     with col_in:
-        st.markdown("### 🛒 Dodaj składnik")
+        # Zamiast zwykłego text_input w sekcji 'Dodaj Batch':
+    st.markdown("### 🛒 Dodaj składnik")
+    
+    source_type = st.radio("Źródło składnika", ["Z zewnątrz (sklep/ręcznie)", "Ze spiżarni"], horizontal=True)
+    
+    if source_type == "Ze spiżarni":
+        # Pobieramy to co mamy w spiżarni
+        available_items = db.execute(text("SELECT id, name, weight_g FROM pantry_items WHERE weight_g > 0")).fetchall()
+        if available_items:
+            item_options = {f"{i[1]} (Zostało: {i[2]}g)": i for i in available_items}
+            selected_label = st.selectbox("Wybierz produkt", list(item_options.keys()))
+            selected_item = item_options[selected_label]
+            
+            ing_name = selected_item[1]
+            ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item[2]), key="pantry_w")
+            
+            if st.button("➕ Dodaj do garnka i odejmij ze spiżarni"):
+                if ing_weight > 0:
+                    with st.spinner("Liczenie kalorii..."):
+                        kcal = get_calories_from_ai(ing_name, ing_weight)
+                        # Zapisz do szkicu garnka
+                        db.execute(
+                            text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
+                            {"n": ing_name, "w": ing_weight, "k": kcal}
+                        )
+                        # Odejmij ze spiżarni
+                        db.execute(text("UPDATE pantry_items SET weight_g = weight_g - :w WHERE id = :id"), {"w": ing_weight, "id": selected_item[0]})
+                        db.commit()
+                        st.rerun()
+        else:
+            st.warning("Brak produktów w spiżarni!")
+            
+    else:
+        # Klasyczne wpisywanie ręczne (Twój dotychczasowy kod)
         ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
         ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
         
-        if st.button("➕ Dodaj do bazy"):
+        if st.button("➕ Dodaj do garnka"):
             if ing_name and ing_weight > 0:
-                with st.spinner("Liczenie kalorii i zapisywanie szkicu..."):
+                with st.spinner("Liczenie kalorii..."):
                     kcal = get_calories_from_ai(ing_name, ing_weight)
-                    # Zapisujemy bezpośrednio do tabeli szkiców
                     db.execute(
                         text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
                         {"n": ing_name, "w": ing_weight, "k": kcal}
                     )
                     db.commit()
-                    st.rerun() # Odświeżamy, by pobrać nową listę
-
+                    st.rerun()
+        
     with col_summary:
         st.markdown("### 🥘 Zawartość garnka")
         
@@ -838,4 +885,93 @@ elif choice == "📏 Pomiary":
             trend_desc = "spadnie" if diff < 0 else "wzrośnie"
             st.write(f"Przy obecnym tempie, za 2 tygodnie Twój **{option.lower()}** {trend_desc} o ok. **{abs(diff):.2f}**.")
 
+    db.close()
+
+# --- 🛒 LISTA ZAKUPÓW ---
+elif choice == "🛒 Lista Zakupów":
+    st.header("🛒 Lista Zakupów")
+    db = SessionLocal()
+    
+    # Dodawanie nowego produktu
+    with st.form("add_shopping_form", clear_on_submit=True):
+        col1, col2 = st.columns([3, 1])
+        item_name = col1.text_input("Co musisz kupić?", placeholder="np. Jajka, Mleko, Kurczak")
+        submit_item = col2.form_submit_button("➕ Dodaj")
+        
+        if submit_item and item_name:
+            db.add(ShoppingListItem(name=item_name))
+            db.commit()
+            st.rerun()
+
+    # Wyświetlanie listy
+    st.subheader("Do kupienia")
+    items_to_buy = db.query(ShoppingListItem).filter(ShoppingListItem.is_bought == False).all()
+    
+    if not items_to_buy:
+        st.info("Lista jest pusta. Wszystko kupione!")
+    else:
+        for item in items_to_buy:
+            col_check, col_name, col_del = st.columns([0.5, 3, 1])
+            with col_check:
+                # Jeśli zaznaczysz checkbox, produkt ląduje w koszyku
+                if st.checkbox("✅", key=f"chk_{item.id}"):
+                    item.is_bought = True
+                    db.commit()
+                    st.toast(f"Kupiono: {item.name}")
+                    st.rerun()
+            col_name.write(f"**{item.name}**")
+            with col_del:
+                if st.button("🗑️", key=f"del_shop_{item.id}"):
+                    db.delete(item)
+                    db.commit()
+                    st.rerun()
+    
+    st.divider()
+    if st.button("🧹 Wyczyść kupione z historii"):
+        db.query(ShoppingListItem).filter(ShoppingListItem.is_bought == True).delete()
+        db.commit()
+        st.success("Historia wyczyszczona.")
+        st.rerun()
+    db.close()
+
+# --- 🥫 SPIŻARNIA ---
+elif choice == "🥫 Spiżarnia":
+    st.header("🥫 Twoja Spiżarnia")
+    db = SessionLocal()
+    
+    with st.expander("➕ Dodaj produkt do spiżarni"):
+        c1, c2 = st.columns(2)
+        p_name = c1.text_input("Nazwa produktu (np. Ryż Basmati)")
+        p_weight = c2.number_input("Waga (g)", min_value=0.0, step=50.0)
+        
+        if st.button("Zapisz w spiżarni"):
+            if p_name and p_weight > 0:
+                # Opcjonalnie: można tu dodać zapytanie do AI o kcal_per_100g przy dodawaniu
+                db.add(PantryItem(name=p_name, weight_g=p_weight))
+                db.commit()
+                st.success(f"Dodano {p_name} ({p_weight}g) do zapasów!")
+                st.rerun()
+
+    st.subheader("Aktualne zapasy")
+    pantry_items = db.query(PantryItem).filter(PantryItem.weight_g > 0).all()
+    
+    if not pantry_items:
+        st.info("Twoja spiżarnia jest pusta.")
+    else:
+        for p in pantry_items:
+            c_name, c_weight, c_action = st.columns([2, 1, 1.5])
+            c_name.write(f"**{p.name}**")
+            c_weight.write(f"{p.weight_g:.0f} g")
+            
+            with c_action:
+                with st.popover("⚙️ Akcje"):
+                    take_w = st.number_input("Ile ubyło? (g)", min_value=0.0, max_value=float(p.weight_g), step=10.0, key=f"take_{p.id}")
+                    if st.button("Zabierz / Pożycz", key=f"btn_take_{p.id}"):
+                        p.weight_g -= take_w
+                        db.commit()
+                        st.rerun()
+                    if st.button("🗑️ Usuń całkowicie", key=f"btn_del_p_{p.id}"):
+                        p.weight_g = 0
+                        db.commit()
+                        st.rerun()
     db.close()
