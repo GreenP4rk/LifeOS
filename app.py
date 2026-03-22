@@ -943,7 +943,7 @@ elif choice == "🛒 Lista Zakupów":
             
             # Wywołanie modelu z obsługą wyszukiwania
             response = client.models.generate_content(
-                model="gemini-2.5-pro", # Lub Pro, jeśli masz dostęp
+                model="gemini-3-flash-preview", # Lub Pro, jeśli masz dostęp
                 contents=prompt
             )
             
