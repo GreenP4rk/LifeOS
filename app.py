@@ -103,7 +103,7 @@ def get_live_promotions(location="Pszów"):
         # Pamiętaj o importach na górze pliku:
         # from google.genai.types import GenerateContentConfig, Tool, GoogleSearchRetrieval
         response = client.models.generate_content(
-            model="gemini-3-flash", 
+            model="gemini-2.5-flash",  # Zmieniamy z 3-flash na 2.5-flash
             contents=search_prompt,
             config=GenerateContentConfig(
                 tools=[Tool(google_search_retrieval=GoogleSearchRetrieval())]
