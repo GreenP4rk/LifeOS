@@ -352,6 +352,7 @@ elif choice == "🍳 Nowy Posiłek":
             st.session_state.current_ingredients = []
 
         col_in, col_list = st.columns(2)
+        
         with col_in:
             ing_name = st.text_input("Składnik (np. łosoś z airfryera)")
             ing_weight = st.number_input("Waga (g)", min_value=0.0, key="fresh_w")
@@ -394,7 +395,7 @@ elif choice == "🍳 Nowy Posiłek":
                     st.caption(f"Zostało: {batch.current_weight_g:.0f}g / {batch.original_weight_g:.0f}g")
 
                 with col_actions:
-                    # 1. Pole do wpisania konkretnej wagi
+                    # 1. Pole do wpisania konkretnej wagi (Naprawiony SyntaxError)
                     eat_weight = st.number_input(f"Ile g? ({batch.name})", min_value=0.0, max_value=float(batch.current_weight_g), key=f"eat_w_{batch.id}")
                     
                     c1, c2 = st.columns(2)
