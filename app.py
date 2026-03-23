@@ -428,7 +428,7 @@ elif choice == "🍳 Nowy Posiłek":
             if st.button("✅ Zapisz posiłek"):
                 db = SessionLocal()
                 # Zapisujemy cały posiłek na podstawie dodanych składników
-                db.add(MealLog(name="Posiłek Składany", calories=total_kcal, date=datetime.now()))
+                db.add(MealLog(name=meal_logs, calories=total_kcal, date=datetime.now()))
                 db.commit()
                 db.close()
                 st.session_state.current_ingredients = []
