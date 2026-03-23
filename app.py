@@ -1,6 +1,6 @@
 import streamlit as st
 from google import genai
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import re
