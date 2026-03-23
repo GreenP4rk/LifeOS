@@ -170,6 +170,7 @@ class WorkoutSet(Base):
 class MealLog(Base):
     __tablename__ = 'meal_logs'
     id = Column(Integer, primary_key=True)
+    name = Column(String) # <--- DODALIŚMY TĘ LINIĘ
     date = Column(DateTime, default=datetime.now)
     calories = Column(Float)
     
@@ -428,7 +429,8 @@ elif choice == "🍳 Nowy Posiłek":
             if st.button("✅ Zapisz posiłek"):
                 db = SessionLocal()
                 # Zapisujemy cały posiłek na podstawie dodanych składników
-                db.add(MealLog(name='meal_logs', calories=total_kcal, date=datetime.now()))
+                nazwa_posilku = ", ".join([i['name'] for i in st.session_state.current_ingredients])
+                db.add(MealLog(name=nazwa_posilku, calories=total_kcal, date=datetime.now()))
                 db.commit()
                 db.close()
                 st.session_state.current_ingredients = []
