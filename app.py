@@ -441,54 +441,53 @@ elif choice == "➕ Dodaj Batch":
     col_in, col_summary = st.columns([1, 1])
     
     with col_in:
-        # Zamiast zwykłego text_input w sekcji 'Dodaj Batch':
-    st.markdown("### 🛒 Dodaj składnik")
-    
-    source_type = st.radio("Źródło składnika", ["Z zewnątrz (sklep/ręcznie)", "Ze spiżarni"], horizontal=True)
-    
-    if source_type == "Ze spiżarni":
-        # Pobieramy to co mamy w spiżarni
-        available_items = db.execute(text("SELECT id, name, weight_g FROM pantry_items WHERE weight_g > 0")).fetchall()
-        if available_items:
-            item_options = {f"{i[1]} (Zostało: {i[2]}g)": i for i in available_items}
-            selected_label = st.selectbox("Wybierz produkt", list(item_options.keys()))
-            selected_item = item_options[selected_label]
+        st.markdown("### 🛒 Dodaj składnik")
+        
+        source_type = st.radio("Źródło składnika", ["Z zewnątrz (sklep/ręcznie)", "Ze spiżarni"], horizontal=True)
+        
+        if source_type == "Ze spiżarni":
+            # Pobieramy to co mamy w spiżarni
+            available_items = db.execute(text("SELECT id, name, weight_g FROM pantry_items WHERE weight_g > 0")).fetchall()
+            if available_items:
+                item_options = {f"{i[1]} (Zostało: {i[2]}g)": i for i in available_items}
+                selected_label = st.selectbox("Wybierz produkt", list(item_options.keys()))
+                selected_item = item_options[selected_label]
+                
+                ing_name = selected_item[1]
+                ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item[2]), key="pantry_w")
+                
+                if st.button("➕ Dodaj do garnka i odejmij ze spiżarni"):
+                    if ing_weight > 0:
+                        with st.spinner("Liczenie kalorii..."):
+                            kcal = get_calories_from_ai(ing_name, ing_weight)
+                            # Zapisz do szkicu garnka
+                            db.execute(
+                                text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
+                                {"n": ing_name, "w": ing_weight, "k": kcal}
+                            )
+                            # Odejmij ze spiżarni
+                            db.execute(text("UPDATE pantry_items SET weight_g = weight_g - :w WHERE id = :id"), {"w": ing_weight, "id": selected_item[0]})
+                            db.commit()
+                            st.rerun()
+            else:
+                st.warning("Brak produktów w spiżarni!")
+                
+        else:
+            # Klasyczne wpisywanie ręczne
+            ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
+            ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
             
-            ing_name = selected_item[1]
-            ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item[2]), key="pantry_w")
-            
-            if st.button("➕ Dodaj do garnka i odejmij ze spiżarni"):
-                if ing_weight > 0:
+            if st.button("➕ Dodaj do garnka"):
+                if ing_name and ing_weight > 0:
                     with st.spinner("Liczenie kalorii..."):
                         kcal = get_calories_from_ai(ing_name, ing_weight)
-                        # Zapisz do szkicu garnka
                         db.execute(
                             text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
                             {"n": ing_name, "w": ing_weight, "k": kcal}
                         )
-                        # Odejmij ze spiżarni
-                        db.execute(text("UPDATE pantry_items SET weight_g = weight_g - :w WHERE id = :id"), {"w": ing_weight, "id": selected_item[0]})
                         db.commit()
                         st.rerun()
-        else:
-            st.warning("Brak produktów w spiżarni!")
-            
-    else:
-        # Klasyczne wpisywanie ręczne (Twój dotychczasowy kod)
-        ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
-        ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
-        
-        if st.button("➕ Dodaj do garnka"):
-            if ing_name and ing_weight > 0:
-                with st.spinner("Liczenie kalorii..."):
-                    kcal = get_calories_from_ai(ing_name, ing_weight)
-                    db.execute(
-                        text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
-                        {"n": ing_name, "w": ing_weight, "k": kcal}
-                    )
-                    db.commit()
-                    st.rerun()
-        
+    
     with col_summary:
         st.markdown("### 🥘 Zawartość garnka")
         
