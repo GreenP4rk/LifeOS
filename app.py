@@ -381,11 +381,16 @@ elif choice == "🍳 Nowy Posiłek":
         st.subheader("📦 Wybór z Twoich zapasów")
         db = SessionLocal()
         batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
-        
-  if not batches:
+  
+        if not batches:
             st.info("Twoja zamrażarka jest pusta.")
- else:
-            # --- Sekcja wewnątrz pętli wyświetlającej batche (📦 Zamrażarka) ---
+        else:
+            # Pętla wyświetlająca dostępne batche
+            for batch in batches:
+                col_info, col_actions = st.columns([2, 2])
+                with col_info:
+                    st.write(f"**{batch.name}**")
+                    st.caption(f"Zostało: {batch.current_weight_g:.0f}g / {batch.original_weight_g:.0f}g")
 
 with col_actions:
     # 1. Pole do wpisania konkretnej wagi
