@@ -381,63 +381,48 @@ elif choice == "🍳 Nowy Posiłek":
         st.subheader("📦 Wybór z Twoich zapasów")
         db = SessionLocal()
         batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
-  
+
         if not batches:
             st.info("Twoja zamrażarka jest pusta.")
         else:
             # Pętla wyświetlająca dostępne batche
             for batch in batches:
                 col_info, col_actions = st.columns([2, 2])
+                
                 with col_info:
                     st.write(f"**{batch.name}**")
                     st.caption(f"Zostało: {batch.current_weight_g:.0f}g / {batch.original_weight_g:.0f}g")
 
-with col_actions:
-    # 1. Pole do wpisania konkretnej wagi
-    eat_weight = st.number_input("Ile g?", min_value=0.0, max_value=float(batch.current_weight_g), key=f"eat_w_{batch.id}")
-    
-    if st.button("🍽️ Zjedz porcję", key=f"btn_eat_p_{batch.id}"):
-        if eat_weight > 0:
-            # Obliczamy kalorie dla zjedzonej części
-            kcal_per_g = batch.total_calories / batch.original_weight_g
-            eaten_kcal = eat_weight * kcal_per_g
-            
-            # Aktualizujemy wagę w zamrażarce
-            batch.current_weight_g -= eat_weight
-            
-            # Dodajemy do logu posiłków
-            new_meal = MealLog(
-                name=f"{batch.name} (Batch)",
-                calories=eaten_kcal,
-                protein=0, fat=0, carbs=0, # Można rozwinąć o makro jeśli AI je liczyło
-                date=datetime.now()
-            )
-            db.add(new_meal)
-            db.commit()
-            st.success(f"Smacznego! Log: {eaten_kcal:.0f} kcal")
-            st.rerun()
-
-    # 2. NAPRAWIONY PRZYCISK: Zjedz całość
-    if st.button("🗑️ Zjedz całość", key=f"btn_all_{batch.id}", help="Usuwa danie i dodaje resztę kalorii do bilansu"):
-        # Obliczamy kalorie dla tego, co ZOSTAŁO w pudełku
-        kcal_per_g = batch.total_calories / batch.original_weight_g
-        remaining_kcal = batch.current_weight_g * kcal_per_g
-        
-        # Dodajemy log posiłku
-        full_meal = MealLog(
-            name=f"{batch.name} (Koniec Batcha)",
-            calories=remaining_kcal,
-            date=datetime.now()
-        )
-        db.add(full_meal)
-        
-        # Usuwamy batch z bazy danych
-        db.delete(batch)
-        
-        # Kluczowe: Commit i Rerun
-        db.commit() 
-        st.toast(f"Wymieciono do czysta! +{remaining_kcal:.0f} kcal")
-        st.rerun() # To wymusza odświeżenie listy zamrażarki
+                with col_actions:
+                    # 1. Pole do wpisania konkretnej wagi
+                    eat_weight = st.number_input(f"Ile g? ({batch.name})", min_value=0.0, max_value=float(batch.current_weight_g), key=f"eat_w_{batch.id}")
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("🍽️ Zjedz porcję", key=f"btn_eat_p_{batch.id}"):
+                            if eat_weight > 0:
+                                kcal_per_g = batch.total_calories / batch.original_weight_g
+                                eaten_kcal = eat_weight * kcal_per_g
+                                batch.current_weight_g -= eat_weight
+                                
+                                new_meal = MealLog(calories=eaten_kcal, date=datetime.now())
+                                db.add(new_meal)
+                                db.commit()
+                                st.success(f"Zapisano: {eaten_kcal:.0f} kcal")
+                                st.rerun()
+                    
+                    with c2:
+                        if st.button("🗑️ Zjedz całość", key=f"btn_all_{batch.id}"):
+                            kcal_per_g = batch.total_calories / batch.original_weight_g
+                            remaining_kcal = batch.current_weight_g * kcal_per_g
+                            
+                            full_meal = MealLog(calories=remaining_kcal, date=datetime.now())
+                            db.add(full_meal)
+                            db.delete(batch)
+                            db.commit() 
+                            st.rerun()
+                st.divider()
+        db.close()
 
 # --- ➕ DODAJ BATCH (Wersja z trwałą pamięcią) ---
 elif choice == "➕ Dodaj Batch":
