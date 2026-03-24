@@ -210,35 +210,7 @@ def init_db_engine():
     return create_engine(db_url, pool_pre_ping=True)
 
 engine = init_db_engine()
-# --- TYMCZASOWY SKRYPT NAPRAWCZY ---
-from sqlalchemy import text
-with engine.connect() as conn:
-    try:
-        # Próbujemy dodać brakujące kolumny do MealLog
-        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN protein_g FLOAT DEFAULT 0.0"))
-        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN carbs_g FLOAT DEFAULT 0.0"))
-        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN fat_g FLOAT DEFAULT 0.0"))
-        # Próbujemy dodać brakujące kolumny do MealBatch
-        conn.execute(text("ALTER TABLE meal_batches ADD COLUMN total_protein FLOAT DEFAULT 0.0"))
-        conn.execute(text("ALTER TABLE meal_batches ADD COLUMN total_carbs FLOAT DEFAULT 0.0"))
-        conn.execute(text("ALTER TABLE meal_batches ADD COLUMN total_fat FLOAT DEFAULT 0.0"))
-        conn.commit()
-        st.success("✅ Baza danych została pomyślnie zaktualizowana o nowe kolumny!")
-    except Exception as e:
-        # Jeśli kolumny już istnieją, SQL rzuci błąd - po prostu go ignorujemy
-        pass
-# ----------------------------------
-from sqlalchemy import text
-with engine.connect() as conn:
-    try:
-        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN protein_g FLOAT DEFAULT 0.0"))
-        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN carbs_g FLOAT DEFAULT 0.0"))
-        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN fat_g FLOAT DEFAULT 0.0"))
-        conn.commit()
-        st.success("Dodano brakujące kolumny do bazy!")
-    except Exception:
-        # Kolumny prawdopodobnie już istnieją
-        pass
+
 Base.metadata.create_all(engine) # Zabezpieczenie: upewnijmy się, że wszystkie tabele (w tym nowa draft) powstaną
 SessionLocal = sessionmaker(bind=engine)
 
@@ -247,20 +219,51 @@ SessionLocal = sessionmaker(bind=engine)
 def get_dashboard_data():
     db = SessionLocal()
     today = datetime.now().date()
-    today_meals = db.query(MealLog).filter(MealLog.date >= today).all()
-    today_activity = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
     
+    # Dane o posiłkach
+    today_meals = db.query(MealLog).filter(MealLog.date >= today).all()
     total_kcal_eaten = sum(m.calories for m in today_meals)
     total_protein = sum(m.protein_g for m in today_meals)
     total_carbs = sum(m.carbs_g for m in today_meals)
     total_fat = sum(m.fat_g for m in today_meals)
     
+    # Dane o aktywności
+    today_activity = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
     total_kcal_burned = sum(a.calories_burned for a in today_activity)
-    total_batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
     
-    last_workout = db.query(WorkoutSet).order_by(WorkoutSet.date.desc()).first()
-    last_workout_weight = last_workout.weight if last_workout else None
+    # Pobranie najnowszej wagi do wyliczenia celów
+    latest_meas = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
+    weight = latest_meas.weight if latest_meas else 80.0 # fallback na 80kg
+    
+    # Pobranie limitu kcal
+    limit_kcal = get_daily_limit()
+    
+    # OBLICZANIE CELÓW MAKRO
+    # Białko: 2g / kg
+    target_p = weight * 2.0
+    # Tłuszcz: 0.8g / kg
+    target_f = weight * 0.8
+    # Węglowodany: Reszta z limitu (1g P/W = 4kcal, 1g T = 9kcal)
+    remaining_kcal = limit_kcal - (target_p * 4) - (target_f * 9)
+    target_c = max(remaining_kcal / 4, 0)
+    
+    total_batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
     db.close()
+    
+    return {
+        "eaten": total_kcal_eaten,
+        "protein": total_protein,
+        "carbs": total_carbs,
+        "fat": total_fat,
+        "burned": total_kcal_burned,
+        "batches_count": total_batches,
+        "targets": {
+            "kcal": limit_kcal,
+            "protein": target_p,
+            "carbs": target_c,
+            "fat": target_f
+        }
+    }
     
     return {
         "eaten": total_kcal_eaten,
@@ -393,14 +396,33 @@ if choice == "🏠 Dashboard":
     else:
         st.write(f"Wykorzystano **{progress*100:.1f}%** dostępnej energii.")
 
-    # --- NOWE: MAKRO NA DASHBOARDZIE ---
+    # --- NOWE: MAKRO NA DASHBOARDZIE Z CELAMI ---
     st.divider()
-    st.markdown("### 📊 Dzienne Makroskładniki")
+    st.markdown("### 📊 Postęp Makroskładników")
+    
+    t = dash_data["targets"]
     
     col_p, col_c, col_f = st.columns(3)
-    col_p.metric("🥩 Białko", f"{dash_data['protein']:.0f} g")
-    col_c.metric("🍞 Węglowodany", f"{dash_data['carbs']:.0f} g")
-    col_f.metric("🥑 Tłuszcze", f"{dash_data['fat']:.0f} g")
+    
+    with col_p:
+        p_perc = min(dash_data['protein'] / t['protein'], 1.2) if t['protein'] > 0 else 0
+        st.metric("🥩 Białko", f"{dash_data['protein']:.0f} / {t['protein']:.0f} g")
+        st.progress(p_perc if p_perc <= 1.0 else 1.0)
+        st.caption(f"Cel: {t['protein']:.0f}g (2g/kg)")
+
+    with col_c:
+        c_perc = min(dash_data['carbs'] / t['carbs'], 1.2) if t['carbs'] > 0 else 0
+        st.metric("🍞 Węglowodany", f"{dash_data['carbs']:.0f} / {t['carbs']:.0f} g")
+        st.progress(c_perc if c_perc <= 1.0 else 1.0)
+        st.caption(f"Cel: {t['carbs']:.0f}g (reszta)")
+
+    with col_f:
+        f_perc = min(dash_data['fat'] / t['fat'], 1.2) if t['fat'] > 0 else 0
+        st.metric("🥑 Tłuszcze", f"{dash_data['fat']:.0f} / {t['fat']:.0f} g")
+        st.progress(f_perc if f_perc <= 1.0 else 1.0)
+        st.caption(f"Cel: {t['fat']:.0f}g (0.8g/kg)")
+
+    st.info(f"💡 Cele obliczone na podstawie Twojej ostatniej wagi: **{weight:.1f} kg**")
 
 # --- 🍳 NOWY POSIŁEK ---
 elif choice == "🍳 Nowy Posiłek":
