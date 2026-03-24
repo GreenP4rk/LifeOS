@@ -210,6 +210,24 @@ def init_db_engine():
     return create_engine(db_url, pool_pre_ping=True)
 
 engine = init_db_engine()
+# --- TYMCZASOWY SKRYPT NAPRAWCZY ---
+from sqlalchemy import text
+with engine.connect() as conn:
+    try:
+        # Próbujemy dodać brakujące kolumny do MealLog
+        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN protein_g FLOAT DEFAULT 0.0"))
+        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN carbs_g FLOAT DEFAULT 0.0"))
+        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN fat_g FLOAT DEFAULT 0.0"))
+        # Próbujemy dodać brakujące kolumny do MealBatch
+        conn.execute(text("ALTER TABLE meal_batches ADD COLUMN total_protein FLOAT DEFAULT 0.0"))
+        conn.execute(text("ALTER TABLE meal_batches ADD COLUMN total_carbs FLOAT DEFAULT 0.0"))
+        conn.execute(text("ALTER TABLE meal_batches ADD COLUMN total_fat FLOAT DEFAULT 0.0"))
+        conn.commit()
+        st.success("✅ Baza danych została pomyślnie zaktualizowana o nowe kolumny!")
+    except Exception as e:
+        # Jeśli kolumny już istnieją, SQL rzuci błąd - po prostu go ignorujemy
+        pass
+# ----------------------------------
 from sqlalchemy import text
 with engine.connect() as conn:
     try:
