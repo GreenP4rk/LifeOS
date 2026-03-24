@@ -210,6 +210,17 @@ def init_db_engine():
     return create_engine(db_url, pool_pre_ping=True)
 
 engine = init_db_engine()
+from sqlalchemy import text
+with engine.connect() as conn:
+    try:
+        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN protein_g FLOAT DEFAULT 0.0"))
+        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN carbs_g FLOAT DEFAULT 0.0"))
+        conn.execute(text("ALTER TABLE meal_logs ADD COLUMN fat_g FLOAT DEFAULT 0.0"))
+        conn.commit()
+        st.success("Dodano brakujące kolumny do bazy!")
+    except Exception:
+        # Kolumny prawdopodobnie już istnieją
+        pass
 Base.metadata.create_all(engine) # Zabezpieczenie: upewnijmy się, że wszystkie tabele (w tym nowa draft) powstaną
 SessionLocal = sessionmaker(bind=engine)
 
