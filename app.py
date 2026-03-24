@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import timedelta
 import numpy as np
+import json
 
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
@@ -40,7 +41,6 @@ def get_calories_from_ai(ingredient_name, weight_g):
             model="gemini-2.5-flash", 
             contents=prompt
         )
-        # Czyszczenie odpowiedzi i wyciąganie liczby
         text = response.text.strip().replace(',', '.')
         match = re.search(r"[-+]?\d*\.\d+|\d+", text)
         
@@ -55,6 +55,29 @@ def get_calories_from_ai(ingredient_name, weight_g):
         st.error(f"⚠️ Błąd podczas zapytania AI: {e}")
         return 0.0
 
+def get_nutrition_from_ai(ingredient_name, weight_g):
+    if client is None:
+        st.error("Brak klucza API!")
+        return 0.0, 0.0, 0.0, 0.0
+    
+    prompt = f"""Podaj wartości odżywcze dla {weight_g}g produktu: {ingredient_name}.
+Zwróć TYLKO czysty kod JSON w poniższym formacie, bez żadnych innych słów i bez znaczników markdown:
+    {{"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}}"""
+    
+    try:
+        st.toast(f"🤖 AI analizuje makro: {ingredient_name}...")
+        response = client.models.generate_content(
+            model="gemini-2.5-flash", 
+            contents=prompt
+        )
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        data = json.loads(clean_text)
+        
+        return float(data.get("kcal", 0)), float(data.get("protein", 0)), float(data.get("carbs", 0)), float(data.get("fat", 0))
+    except Exception as e:
+        st.error(f"Błąd odczytu danych z AI: {e}")
+        return 0.0, 0.0, 0.0, 0.0
+
 def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
     if client is None:
         return 0.0
@@ -63,7 +86,7 @@ def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
     Użytkownik o wadze {weight_kg} kg i wzroście {height_cm} cm wykonał dzisiaj następujący trening siłowy:
     {workout_summary}
     
-    Oszacuj całkowitą liczbę spalonych kalorii podczas tego treningu, biorąc pod uwagę jego parametry ciała, objętość treningową i ciężary. 
+    Oszacuj całkowitą liczbę spalonych kalorii podczas tego treningu, biorąc pod uwagę jego parametry ciała, objętość treningową i ciężary.
     Zwróć TYLKO samą liczbę (bez tekstu, bez jednostek, np. 350).
     """
     try:
@@ -81,15 +104,36 @@ def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
 # --- 3. BAZA DANYCH - MODELE ---
 Base = declarative_base()
 
+class MealLog(Base):
+    __tablename__ = "meal_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    calories = Column(Float)
+    date = Column(DateTime, default=datetime.now)
+    protein_g = Column(Float, default=0.0)
+    carbs_g = Column(Float, default=0.0)
+    fat_g = Column(Float, default=0.0)
+
 class MealBatch(Base):
-    __tablename__ = 'meal_batches'
-    id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)
-    original_weight_g = Column(Float)   
-    current_weight_g = Column(Float)    
-    total_calories = Column(Float)      
-    total_price = Column(Float)
+    __tablename__ = "meal_batches"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    original_weight_g = Column(Float)
+    current_weight_g = Column(Float)
+    total_calories = Column(Float)
     date_prepared = Column(DateTime, default=datetime.now)
+    total_protein = Column(Float, default=0.0)
+    total_carbs = Column(Float, default=0.0)
+    total_fat = Column(Float, default=0.0)
+
+class BatchDraft(Base):
+    __tablename__ = 'batch_drafts'
+    id = Column(Integer, primary_key=True)
+    ingredient_name = Column(String)
+    weight = Column(Float)
+    kcal = Column(Float)
+    protein = Column(Float, default=0.0)
+    carbs = Column(Float, default=0.0)
+    fat = Column(Float, default=0.0)
 
 class ActivityLog(Base):
     __tablename__ = 'activity_log'
@@ -110,12 +154,6 @@ class WorkoutSet(Base):
     weight = Column(Float)
     reps = Column(Integer)
 
-class MealLog(Base):
-    __tablename__ = 'meal_logs'
-    id = Column(Integer, primary_key=True)
-    date = Column(DateTime, default=datetime.now)
-    calories = Column(Float)
-    
 class Settings(Base):
     __tablename__ = 'settings'
     id = Column(Integer, primary_key=True)
@@ -172,6 +210,7 @@ def init_db_engine():
     return create_engine(db_url, pool_pre_ping=True)
 
 engine = init_db_engine()
+Base.metadata.create_all(engine) # Zabezpieczenie: upewnijmy się, że wszystkie tabele (w tym nowa draft) powstaną
 SessionLocal = sessionmaker(bind=engine)
 
 # --- 5. FUNKCJE DANYCH (CACHE) ---
@@ -183,11 +222,12 @@ def get_dashboard_data():
     today_activity = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
     
     total_kcal_eaten = sum(m.calories for m in today_meals)
+    total_protein = sum(m.protein_g for m in today_meals)
+    total_carbs = sum(m.carbs_g for m in today_meals)
+    total_fat = sum(m.fat_g for m in today_meals)
+    
     total_kcal_burned = sum(a.calories_burned for a in today_activity)
     total_batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).count()
-    
-    total_val_res = db.query(MealBatch).all()
-    total_value = sum(b.total_price for b in total_val_res if b.total_price)
     
     last_workout = db.query(WorkoutSet).order_by(WorkoutSet.date.desc()).first()
     last_workout_weight = last_workout.weight if last_workout else None
@@ -195,9 +235,11 @@ def get_dashboard_data():
     
     return {
         "eaten": total_kcal_eaten,
+        "protein": total_protein,
+        "carbs": total_carbs,
+        "fat": total_fat,
         "burned": total_kcal_burned,
         "batches_count": total_batches,
-        "batches_value": total_value,
         "last_workout_weight": last_workout_weight
     }
 
@@ -209,7 +251,7 @@ def get_daily_limit():
         db.close()
         if result:
             return int(result[0])
-        return 1850 # Domyślny, jeśli baza zawiedzie
+        return 1850 
     except:
         return 1850
         
@@ -226,15 +268,14 @@ def set_daily_limit(new_limit):
 # --- 6. NAWIGACJA ---
 st.sidebar.title("🧭 Menu LifeOS")
 choice = st.sidebar.radio("Przejdź do:", 
-    ["🏠 Dashboard", "🛒 Lista Zakupów", "🥫 Spiżarnia", "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność", "💪 Trening", "📏 Pomiary"])
+    ["🏠 Dashboard", "🛒 Lista Zakupów", "🥫 Spiżarnia", 
+     "🍳 Nowy Posiłek", "➕ Dodaj Batch", "📦 Zamrażarka", "👟 Aktywność", "💪 Trening", "📏 Pomiary"])
 
 st.sidebar.markdown("---")
 
-# --- SEKCOJA 1: USTWIENIA LIMITU ---
 st.sidebar.markdown("### ⚙️ Twój Plan")
 current_limit = get_daily_limit()
 
-# Wybór limitu z krokiem 50 kcal
 new_limit = st.sidebar.number_input(
     "Dzienny cel (kcal)", 
     value=current_limit, 
@@ -247,8 +288,7 @@ if new_limit != current_limit:
     if st.sidebar.button("💾 Zapisz nowy limit"):
         db = SessionLocal()
         from sqlalchemy import text
-        db.execute(text("INSERT INTO settings (key, value) VALUES ('daily_limit', :val) "
-                        "ON CONFLICT (key) DO UPDATE SET value = :val"), {"val": str(new_limit)})
+        db.execute(text("INSERT INTO settings (key, value) VALUES ('daily_limit', :val) ON CONFLICT (key) DO UPDATE SET value = :val"), {"val": str(new_limit)})
         db.commit()
         db.close()
         st.sidebar.success(f"Limit zmieniony na {new_limit}!")
@@ -256,10 +296,8 @@ if new_limit != current_limit:
 
 st.sidebar.markdown("---")
 
-# --- SEKCOJA 2: TRYB DEBUGOWANIA (SCHOWANY) ---
 with st.sidebar.expander("🛠️ Debug & Developer Tools"):
     st.write("Funkcje testowe i administracyjne")
-    
     if st.button("🧨 Resetuj tabelę Aktywność"):
         from sqlalchemy import text
         with engine.connect() as conn:
@@ -277,12 +315,9 @@ with st.sidebar.expander("🛠️ Debug & Developer Tools"):
 
 # --- 7. LOGIKA APLIKACJI ---
 
-current_saved_limit = get_daily_limit()
-
 if choice == "🏠 Dashboard":
     st.title("🚀 Dashboard")
     
-    # Sprawdzanie aktualności pomiarów (Przypominajka)
     db_dash = SessionLocal()
     latest_measurement = db_dash.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
     db_dash.close()
@@ -297,12 +332,10 @@ if choice == "🏠 Dashboard":
     dash_data = get_dashboard_data()
     limit = get_daily_limit()
     
-    # Obliczenia
     total_allowed = limit + dash_data["burned"]
     remaining = total_allowed - dash_data["eaten"]
     is_over_limit = remaining < 0
     
-    # 1. ALERT PRZEKROCZENIA (Czerwone podświetlenie)
     if is_over_limit:
         st.error(f"⚠️ PRZEKROCZONO LIMIT o {abs(remaining):.0f} kcal!")
     elif remaining < 200:
@@ -310,14 +343,9 @@ if choice == "🏠 Dashboard":
     else:
         st.success(f"✅ Świetnie! Masz jeszcze {remaining:.0f} kcal zapasu.")
 
-    # 2. METRYKI
     col1, col2, col3 = st.columns(3)
-    
     col1.metric("Zjedzone", f"{dash_data['eaten']:.0f} kcal")
     col2.metric("Spalone", f"{dash_data['burned']:.0f} kcal", delta=f"{dash_data['burned']:.0f} bonus")
-    
-    # Dynamiczny kolor delty dla "Pozostało"
-    # Jeśli na minusie, delta pokaże się na czerwono
     col3.metric(
         "Pozostało", 
         f"{remaining:.0f} kcal", 
@@ -327,12 +355,8 @@ if choice == "🏠 Dashboard":
     
     st.markdown("---")
     
-    # 3. PASEK POSTĘPU
     st.subheader("📊 Stan limitu")
     progress = min(dash_data["eaten"] / total_allowed, 1.0) if total_allowed > 0 else 0
-    
-    # Jeśli przekroczono limit, pasek może zmienić się wizualnie (Streamlit progress jest zawsze zielony/niebieski, 
-    # ale możemy dodać tekst pod spodem)
     st.progress(progress)
     
     if is_over_limit:
@@ -340,11 +364,18 @@ if choice == "🏠 Dashboard":
     else:
         st.write(f"Wykorzystano **{progress*100:.1f}%** dostępnej energii.")
 
-# --- 🍳 NOWY POSIŁEK (Z opcją zamrażarki) ---
+    # --- NOWE: MAKRO NA DASHBOARDZIE ---
+    st.divider()
+    st.markdown("### 📊 Dzienne Makroskładniki")
+    
+    col_p, col_c, col_f = st.columns(3)
+    col_p.metric("🥩 Białko", f"{dash_data['protein']:.0f} g")
+    col_c.metric("🍞 Węglowodany", f"{dash_data['carbs']:.0f} g")
+    col_f.metric("🥑 Tłuszcze", f"{dash_data['fat']:.0f} g")
+
+# --- 🍳 NOWY POSIŁEK ---
 elif choice == "🍳 Nowy Posiłek":
     st.header("🍳 Rejestracja Posiłku")
-    
-    # Wybór źródła posiłku
     source = st.radio("Skąd pochodzi posiłek?", ["Kalkulator AI (świeży)", "📦 Wyciągam z zamrażarki"], horizontal=True)
 
     if source == "Kalkulator AI (świeży)":
@@ -358,24 +389,38 @@ elif choice == "🍳 Nowy Posiłek":
             ing_weight = st.number_input("Waga (g)", min_value=0.0, key="fresh_w")
             if st.button("➕ Dodaj składnik"):
                 if ing_name and ing_weight > 0:
-                    kcal = get_calories_from_ai(ing_name, ing_weight)
-                    st.session_state.current_ingredients.append({'name': ing_name, 'weight': ing_weight, 'kcal': kcal})
+                    kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight)
+                    st.session_state.current_ingredients.append({
+                        'name': ing_name, 'weight': ing_weight, 
+                        'kcal': kcal, 'protein': prot, 'carbs': carbs, 'fat': fat
+                    })
                     st.rerun()
 
         with col_list:
             total_kcal = sum(i['kcal'] for i in st.session_state.current_ingredients)
+            total_prot = sum(i['protein'] for i in st.session_state.current_ingredients)
+            total_carbs = sum(i['carbs'] for i in st.session_state.current_ingredients)
+            total_fat = sum(i['fat'] for i in st.session_state.current_ingredients)
+            
             st.subheader(f"Razem: {total_kcal:.0f} kcal")
+            st.caption(f"B: {total_prot:.0f}g | W: {total_carbs:.0f}g | T: {total_fat:.0f}g")
+            
             for i in st.session_state.current_ingredients:
                 st.text(f"• {i['name']}: {i['weight']}g (~{i['kcal']:.0f} kcal)")
             
             if st.button("✅ Zapisz posiłek"):
                 db = SessionLocal()
-                db.add(MealLog(calories=total_kcal))
+                db.add(MealLog(
+                    calories=total_kcal, 
+                    protein_g=total_prot, 
+                    carbs_g=total_carbs, 
+                    fat_g=total_fat
+                ))
                 db.commit()
                 db.close()
                 get_dashboard_data.clear()
                 st.session_state.current_ingredients = []
-                st.success("Zapisano w dzienniku!")
+                st.success("Zapisano w dzienniku z pełnym makro!")
                 st.rerun()
 
     else:
@@ -386,7 +431,6 @@ elif choice == "🍳 Nowy Posiłek":
         if not batches:
             st.info("Twoja zamrażarka jest pusta.")
         else:
-            # Pętla wyświetlająca dostępne batche
             for batch in batches:
                 col_info, col_actions = st.columns([2, 2])
                 
@@ -395,46 +439,58 @@ elif choice == "🍳 Nowy Posiłek":
                     st.caption(f"Zostało: {batch.current_weight_g:.0f}g / {batch.original_weight_g:.0f}g")
 
                 with col_actions:
-                    # 1. Pole do wpisania konkretnej wagi (Naprawiony SyntaxError)
                     eat_weight = st.number_input(f"Ile g? ({batch.name})", min_value=0.0, max_value=float(batch.current_weight_g), key=f"eat_w_{batch.id}")
                     
                     c1, c2 = st.columns(2)
                     with c1:
                         if st.button("🍽️ Zjedz porcję", key=f"btn_eat_p_{batch.id}"):
                             if eat_weight > 0:
-                                kcal_per_g = batch.total_calories / batch.original_weight_g
-                                eaten_kcal = eat_weight * kcal_per_g
+                                ratio = eat_weight / batch.original_weight_g
+                                eaten_kcal = batch.total_calories * ratio
+                                eaten_p = batch.total_protein * ratio
+                                eaten_c = batch.total_carbs * ratio
+                                eaten_f = batch.total_fat * ratio
+                                
                                 batch.current_weight_g -= eat_weight
                                 
-                                new_meal = MealLog(calories=eaten_kcal, date=datetime.now())
+                                new_meal = MealLog(
+                                    calories=eaten_kcal, 
+                                    protein_g=eaten_p, carbs_g=eaten_c, fat_g=eaten_f, 
+                                    date=datetime.now()
+                                )
                                 db.add(new_meal)
                                 db.commit()
                                 st.success(f"Zapisano: {eaten_kcal:.0f} kcal")
+                                get_dashboard_data.clear()
                                 st.rerun()
                     
                     with c2:
                         if st.button("🗑️ Zjedz całość", key=f"btn_all_{batch.id}"):
-                            kcal_per_g = batch.total_calories / batch.original_weight_g
-                            remaining_kcal = batch.current_weight_g * kcal_per_g
+                            ratio = batch.current_weight_g / batch.original_weight_g
+                            remaining_kcal = batch.total_calories * ratio
+                            remaining_p = batch.total_protein * ratio
+                            remaining_c = batch.total_carbs * ratio
+                            remaining_f = batch.total_fat * ratio
                             
-                            full_meal = MealLog(calories=remaining_kcal, date=datetime.now())
+                            full_meal = MealLog(
+                                calories=remaining_kcal, 
+                                protein_g=remaining_p, carbs_g=remaining_c, fat_g=remaining_f, 
+                                date=datetime.now()
+                            )
                             db.add(full_meal)
                             db.delete(batch)
                             db.commit() 
+                            get_dashboard_data.clear()
                             st.rerun()
                 st.divider()
         db.close()
 
-# --- ➕ DODAJ BATCH (Wersja z trwałą pamięcią) ---
+# --- ➕ DODAJ BATCH ---
 elif choice == "➕ Dodaj Batch":
     st.header("📦 Gotowanie na zapas (Bezpieczny Zapis)")
     
-    # Inicjalizacja bazy
     db = SessionLocal()
-    from sqlalchemy import text
-
-    # Pobieramy aktualne składniki z bazy "szkiców"
-    drafts = db.execute(text("SELECT id, ingredient_name, weight, kcal FROM batch_drafts")).fetchall()
+    drafts = db.query(BatchDraft).all()
 
     b_name = st.text_input("Nazwa potrawy (np. Bigos)", placeholder="Wpisz nazwę...")
     
@@ -446,45 +502,35 @@ elif choice == "➕ Dodaj Batch":
         source_type = st.radio("Źródło składnika", ["Z zewnątrz (sklep/ręcznie)", "Ze spiżarni"], horizontal=True)
         
         if source_type == "Ze spiżarni":
-            # Pobieramy to co mamy w spiżarni
-            available_items = db.execute(text("SELECT id, name, weight_g FROM pantry_items WHERE weight_g > 0")).fetchall()
+            available_items = db.query(PantryItem).filter(PantryItem.weight_g > 0).all()
             if available_items:
-                item_options = {f"{i[1]} (Zostało: {i[2]}g)": i for i in available_items}
+                item_options = {f"{i.name} (Zostało: {i.weight_g}g)": i for i in available_items}
                 selected_label = st.selectbox("Wybierz produkt", list(item_options.keys()))
                 selected_item = item_options[selected_label]
                 
-                ing_name = selected_item[1]
-                ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item[2]), key="pantry_w")
+                ing_name = selected_item.name
+                ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item.weight_g), key="pantry_w")
                 
                 if st.button("➕ Dodaj do garnka i odejmij ze spiżarni"):
                     if ing_weight > 0:
-                        with st.spinner("Liczenie kalorii..."):
-                            kcal = get_calories_from_ai(ing_name, ing_weight)
-                            # Zapisz do szkicu garnka
-                            db.execute(
-                                text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
-                                {"n": ing_name, "w": ing_weight, "k": kcal}
-                            )
-                            # Odejmij ze spiżarni
-                            db.execute(text("UPDATE pantry_items SET weight_g = weight_g - :w WHERE id = :id"), {"w": ing_weight, "id": selected_item[0]})
+                        with st.spinner("Liczenie makro..."):
+                            kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight)
+                            db.add(BatchDraft(ingredient_name=ing_name, weight=ing_weight, kcal=kcal, protein=prot, carbs=carbs, fat=fat))
+                            selected_item.weight_g -= ing_weight
                             db.commit()
                             st.rerun()
             else:
                 st.warning("Brak produktów w spiżarni!")
                 
         else:
-            # Klasyczne wpisywanie ręczne
             ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
             ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
             
             if st.button("➕ Dodaj do garnka"):
                 if ing_name and ing_weight > 0:
-                    with st.spinner("Liczenie kalorii..."):
-                        kcal = get_calories_from_ai(ing_name, ing_weight)
-                        db.execute(
-                            text("INSERT INTO batch_drafts (ingredient_name, weight, kcal) VALUES (:n, :w, :k)"),
-                            {"n": ing_name, "w": ing_weight, "k": kcal}
-                        )
+                    with st.spinner("Liczenie makro..."):
+                        kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight)
+                        db.add(BatchDraft(ingredient_name=ing_name, weight=ing_weight, kcal=kcal, protein=prot, carbs=carbs, fat=fat))
                         db.commit()
                         st.rerun()
     
@@ -494,33 +540,37 @@ elif choice == "➕ Dodaj Batch":
         if not drafts:
             st.info("Twój garnek jest pusty. Dodaj pierwszy składnik.")
         else:
-            total_w = sum(d[2] for d in drafts)
-            total_k = sum(d[3] for d in drafts)
+            total_w = sum(d.weight for d in drafts)
+            total_k = sum(d.kcal for d in drafts)
+            total_p = sum(d.protein for d in drafts)
+            total_c = sum(d.carbs for d in drafts)
+            total_f = sum(d.fat for d in drafts)
             
             for d in drafts:
                 c1, c2 = st.columns([4, 1])
-                c1.text(f"• {d[1]} ({d[2]}g)")
-                if c2.button("❌", key=f"del_draft_{d[0]}"):
-                    db.execute(text("DELETE FROM batch_drafts WHERE id = :id"), {"id": d[0]})
+                c1.text(f"• {d.ingredient_name} ({d.weight}g)")
+                if c2.button("❌", key=f"del_draft_{d.id}"):
+                    db.delete(d)
                     db.commit()
                     st.rerun()
             
             st.divider()
             st.write(f"**Waga całkowita:** {total_w:.0f} g")
-            st.write(f"**Kalorie całkowite:** {total_k:.0f} kcal")
+            st.write(f"**Makro:** {total_k:.0f} kcal | B: {total_p:.0f}g | W: {total_c:.0f}g | T: {total_f:.0f}g")
             
             if st.button("💾 ZAPISZ I ZAMROŹ"):
                 if b_name and total_w > 0:
-                    # 1. Tworzymy gotowy Batch
                     db.add(MealBatch(
                         name=b_name, 
                         original_weight_g=total_w, 
                         current_weight_g=total_w, 
                         total_calories=total_k,
+                        total_protein=total_p,
+                        total_carbs=total_c,
+                        total_fat=total_f,
                         date_prepared=datetime.now()
                     ))
-                    # 2. Czyścimy tabelę szkiców (bardzo ważne!)
-                    db.execute(text("DELETE FROM batch_drafts"))
+                    db.query(BatchDraft).delete()
                     db.commit()
                     st.success(f"Danie '{b_name}' bezpiecznie zapisane!")
                     st.balloons()
@@ -528,15 +578,15 @@ elif choice == "➕ Dodaj Batch":
                 else:
                     st.error("Podaj nazwę potrawy przed zapisem!")
 
-    # Przycisk bezpieczeństwa na dnie
     if drafts:
         if st.sidebar.button("🗑️ WYCZYŚĆ CAŁY GARNEK"):
-            db.execute(text("DELETE FROM batch_drafts"))
+            db.query(BatchDraft).delete()
             db.commit()
             st.rerun()
             
     db.close()
-# --- 📦 ZAMRAŻARKA (Z opcją usuwania) ---
+
+# --- 📦 ZAMRAŻARKA ---
 elif choice == "📦 Zamrażarka":
     st.header("📦 Zawartość Zamrażarki")
     db = SessionLocal()
@@ -552,7 +602,6 @@ elif choice == "📦 Zamrażarka":
                 st.caption(f"Pozostało: {b.current_weight_g:.0f}g z {b.original_weight_g:.0f}g")
             with col2:
                 if st.button("🗑️ Usuń", key=f"del_{b.id}"):
-                    # Miękkie usuwanie (ustawienie wagi na 0)
                     target = db.query(MealBatch).filter_by(id=b.id).first()
                     target.current_weight_g = 0
                     db.commit()
@@ -560,10 +609,10 @@ elif choice == "📦 Zamrażarka":
             st.divider()
     db.close()
 
+# --- 👟 AKTYWNOŚĆ ---
 elif choice == "👟 Aktywność":
     st.header("👟 Monitoring Aktywności")
     
-    # Inicjalizacja pamięci sesji dla wyniku analizy
     if 'walk_data' not in st.session_state:
         st.session_state.walk_data = None
 
@@ -582,10 +631,8 @@ elif choice == "👟 Aktywność":
                         import PIL.Image
                         img = PIL.Image.open(uploaded_file)
                         
-                        # Zaktualizowany prompt - nacisk na KALORIE AKTYWNE
                         prompt = """
-                        Zanalizuj zrzut ekranu z Apple Fitness. 
-                        Wyciągnij dane i zwróć TYLKO JSON:
+                        Zanalizuj zrzut ekranu z Apple Fitness. Wyciągnij dane i zwróć TYLKO JSON:
                         {
                           "kcal": 0.0, 
                           "distance": 0.0, 
@@ -595,49 +642,41 @@ elif choice == "👟 Aktywność":
                         }
                         UWAGA: Dla 'kcal' weź wartość opisaną jako 'kalorie aktywne' (active calories), nie 'razem'.
                         """
-                        
                         response = client.models.generate_content(
                             model="gemini-2.5-flash",
                             contents=[prompt, img]
                         )
-                        
-                        import json
-                        # Wyciąganie JSON-a z tekstu
                         clean_json = re.search(r"\{.*\}", response.text, re.DOTALL).group()
                         st.session_state.walk_data = json.loads(clean_json)
                         st.success("Analiza zakończona! Sprawdź dane poniżej.")
-                        
                     except Exception as e:
                         st.error(f"Błąd analizy: {e}")
 
-        # Wyświetlanie wyniku z sesji (jeśli istnieje) i przycisk zapisu
         if st.session_state.walk_data:
             d = st.session_state.walk_data
             st.markdown("---")
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Kalorie Aktywne", f"{d['kcal']} kcal")
-            c2.metric("Dystans", f"{d['distance']} km")
-            c3.metric("Tempo", f"{d['pace']} /km")
-            c4.metric("Tętno", f"{d['hr']} BPM")
+            c1.metric("Kalorie Aktywne", f"{d.get('kcal', 0)} kcal")
+            c2.metric("Dystans", f"{d.get('distance', 0)} km")
+            c3.metric("Tempo", f"{d.get('pace', '0:00')} /km")
+            c4.metric("Tętno", f"{d.get('hr', 0)} BPM")
 
             if st.button("✅ Potwierdź i zapisz do bazy"):
                 try:
                     db = SessionLocal()
                     new_walk = ActivityLog(
-                        calories_burned=float(d['kcal']),
-                        distance_km=float(d['distance']) if d['distance'] else 0.0,
-                        duration_str=str(d['duration']),
-                        avg_pace=str(d['pace']),
-                        avg_hr=int(d['hr']) if d['hr'] else 0,
+                        calories_burned=float(d.get('kcal', 0)),
+                        distance_km=float(d.get('distance', 0)) if d.get('distance') else 0.0,
+                        duration_str=str(d.get('duration', '00:00')),
+                        avg_pace=str(d.get('pace', '0:00')),
+                        avg_hr=int(d.get('hr', 0)) if d.get('hr') else 0,
                         date=datetime.now()
                     )
                     db.add(new_walk)
                     db.commit()
                     db.close()
-                    
-                    # Czyścimy sesję po zapisie
                     st.session_state.walk_data = None
-                    get_dashboard_data.clear() # Czyścimy cache dashboardu
+                    get_dashboard_data.clear() 
                     st.success("Spacer zapisany! Bilans kalorii został zaktualizowany.")
                     st.balloons()
                     st.rerun()
@@ -664,16 +703,12 @@ elif choice == "👟 Aktywność":
                 st.write(f"⏱ Tempo: {l.avg_pace} /km | ❤️ Tętno: {l.avg_hr} BPM")
         db.close()
 
+# --- 💪 TRENING ---
 elif choice == "💪 Trening":
     st.header("💪 Dziennik Treningowy")
-    
     db = SessionLocal()
-    from sqlalchemy import func
     
-    # 1. Pobieramy unikalne nazwy ćwiczeń z bazy (znormalizowane)
-    # Wykorzystujemy func.distinct, żeby nie powtarzać nazw
     existing_exercises = db.query(WorkoutLog.exercise_name).distinct().all()
-    # Czyszczenie listy: wyciągamy z krotek i sortujemy
     exercise_options = sorted([ex[0] for ex in existing_exercises if ex[0]])
     
     tabs = st.tabs(["📝 Dodaj ćwiczenie", "📈 Historia postępów"])
@@ -681,20 +716,12 @@ elif choice == "💪 Trening":
     with tabs[0]:
         with st.form("workout_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
-            
             with col1:
-                # 2. Wybór istniejącego lub opcja dodania nowego
-                selection = st.selectbox(
-                    "Wybierz ćwiczenie", 
-                    ["-- Nowe ćwiczenie --"] + exercise_options
-                )
-                
-                # Jeśli wybrano "Nowe", pokazujemy pole tekstowe
+                selection = st.selectbox("Wybierz ćwiczenie", ["-- Nowe ćwiczenie --"] + exercise_options)
                 if selection == "-- Nowe ćwiczenie --":
                     ex_name = st.text_input("Wpisz nazwę nowego ćwiczenia", placeholder="np. Wyciskanie żołnierskie")
                 else:
                     ex_name = selection
-                
                 eq_type = st.selectbox("Rodzaj obciążenia", ["Masa własna", "Hantle", "Kettlebell", "Sztanga", "Gumy", "Inne"])
             
             with col2:
@@ -706,29 +733,21 @@ elif choice == "💪 Trening":
             
             if submit_workout:
                 if ex_name:
-                    # 3. Normalizacja nazwy: usuwamy spacje i robimy dużą literę na początku
-                    # Dzięki temu "wyciskanie" i "Wyciskanie" będą traktowane jako to samo
                     clean_name = ex_name.strip().capitalize()
-                    
                     new_ex = WorkoutLog(
-                        exercise_name=clean_name,
-                        equipment_type=eq_type,
-                        weight_kg=weight,
-                        reps=reps,
-                        sets=sets,
-                        date=datetime.now()
+                        exercise_name=clean_name, equipment_type=eq_type,
+                        weight_kg=weight, reps=reps, sets=sets, date=datetime.now()
                     )
                     db.add(new_ex)
                     db.commit()
                     st.success(f"Zapisano: {clean_name}")
-                    st.rerun() # Odświeżamy, by nowe ćwiczenie wskoczyło na listę selectbox
+                    st.rerun() 
                 else:
                     st.error("Musisz podać nazwę ćwiczenia!")
 
     with tabs[1]:
         st.subheader("Ostatnie serie")
         logs = db.query(WorkoutLog).order_by(WorkoutLog.date.desc()).limit(30).all()
-        
         if logs:
             for l in logs:
                 with st.expander(f"📅 {l.date.strftime('%d.%m %H:%M')} - {l.exercise_name}"):
@@ -738,19 +757,11 @@ elif choice == "💪 Trening":
         else:
             st.info("Brak wpisów.")
     
-    db.close()
-
-# To kod do dodania na końcu sekcji Trening (w głównej wcięciu)
     st.markdown("---")
     st.subheader("🔥 Podsumowanie dzisiejszego treningu")
     if st.button("🤖 Oblicz kalorie z dzisiejszego treningu"):
-        db = SessionLocal()
         today = datetime.now().date()
-        
-        # Pobieramy dzisiejsze ćwiczenia
         today_logs = db.query(WorkoutLog).filter(WorkoutLog.date >= today).all()
-        
-        # Pobieramy najnowsze wymiary użytkownika
         latest_meas = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
         
         if not today_logs:
@@ -758,7 +769,6 @@ elif choice == "💪 Trening":
         elif not latest_meas:
             st.error("Uzupełnij najpierw swoją wagę i wzrost w zakładce 'Pomiary', aby AI mogło poprawnie policzyć kalorie!")
         else:
-            # Tworzymy podsumowanie treningu jako tekst dla AI
             summary = "\n".join([f"- {l.exercise_name}: {l.sets} serii, {l.reps} powt., {l.weight_kg}kg ({l.equipment_type})" for l in today_logs])
             st.text("Przekazywane do AI:")
             st.text(summary)
@@ -767,32 +777,24 @@ elif choice == "💪 Trening":
                 kcal_burned = get_workout_calories_from_ai(summary, latest_meas.weight, latest_meas.height)
                 
                 if kcal_burned > 0:
-                    # Zapisujemy to jako aktywność do bilansu dziennego
-                    db.add(ActivityLog(
-                        steps=0, 
-                        calories_burned=kcal_burned, 
-                        duration_str="Trening Siłowy",
-                        date=datetime.now()
-                    ))
+                    db.add(ActivityLog(steps=0, calories_burned=kcal_burned, duration_str="Trening Siłowy", date=datetime.now()))
                     db.commit()
                     get_dashboard_data.clear()
                     st.success(f"Doliczono {kcal_burned:.0f} kcal do Twojego dziennego bilansu spalania!")
                     st.balloons()
                 else:
                     st.warning("Nie udało się obliczyć kalorii.")
-        db.close()
+    db.close()
 
+# --- 📏 POMIARY ---
 elif choice == "📏 Pomiary":
     st.header("📏 Śledzenie sylwetki i pomiary")
-    
     db = SessionLocal()
-    # Pobieramy wszystkie dane do wykresów
     all_measurements = db.query(BodyMeasurement).order_by(BodyMeasurement.date.asc()).all()
     last_m = all_measurements[-1] if all_measurements else None
     
     tabs = st.tabs(["📝 Wprowadź pomiary", "📈 Historia", "📊 Wykresy i Trendy"])
     
-    # --- TAB 1: WPISYWANIE ---
     with tabs[0]:
         meas_date = st.date_input("Data pomiaru", value=datetime.now().date())
         c1, c2 = st.columns(2)
@@ -811,42 +813,31 @@ elif choice == "📏 Pomiary":
         if st.button("💾 Zapisz pomiary"):
             final_dt = datetime.combine(meas_date, datetime.now().time())
             new_m = BodyMeasurement(
-                weight=weight, height=height, chest=chest, 
-                waist=waist, belly=belly, thigh=thigh, 
-                biceps=biceps, date=final_dt
+                weight=weight, height=height, chest=chest, waist=waist, 
+                belly=belly, thigh=thigh, biceps=biceps, date=final_dt
             )
             db.add(new_m)
             db.commit()
             st.success("Zapisano!")
             st.rerun()
 
-    # --- TAB 2: HISTORIA ---
     with tabs[1]:
         for m in reversed(all_measurements):
             with st.expander(f"📅 {m.date.strftime('%d.%m.%Y')} | {m.weight}kg"):
                 st.write(f"**Klatka:** {m.chest}cm | **Pas:** {m.waist}cm | **Brzuch:** {m.belly}cm")
                 st.write(f"**Udo:** {m.thigh}cm | **Biceps:** {m.biceps}cm")
 
-    # --- TAB 3: WYKRESY I TRENDY ---
     with tabs[2]:
         if len(all_measurements) < 2:
             st.info("Potrzebujesz co najmniej dwóch pomiarów, aby wygenerować wykres trendu.")
         else:
-            # Konwersja danych z przywróconymi polami
             df = pd.DataFrame([{
-                'Data': m.date,
-                'Waga': m.weight,
-                'Klatka': m.chest,
-                'Pas': m.waist,
-                'Brzuch': m.belly,
-                'Udo': m.thigh,
-                'Biceps': m.biceps
+                'Data': m.date, 'Waga': m.weight, 'Klatka': m.chest, 'Pas': m.waist,
+                'Brzuch': m.belly, 'Udo': m.thigh, 'Biceps': m.biceps
             } for m in all_measurements])
             
-            # Rozszerzona lista parametrów
             option = st.selectbox("Wybierz parametr do analizy:", ["Waga", "Klatka", "Pas", "Brzuch", "Udo", "Biceps"])
             
-            # Obliczenia trendu (bez zmian w logice)
             df['timestamp'] = df['Data'].map(pd.Timestamp.timestamp)
             z = np.polyfit(df['timestamp'], df[option], 1)
             p = np.poly1d(z)
@@ -858,7 +849,6 @@ elif choice == "📏 Pomiary":
 
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df['Data'], y=df[option], mode='lines+markers', name='Pomiary', line=dict(color='#00f2ff', width=3)))
-            
             combined_dates = pd.concat([df['Data'], pd.Series(future_dates[1:])])
             combined_trend = p(pd.concat([df['timestamp'], pd.Series(future_timestamps[1:])]))
             fig.add_trace(go.Scatter(x=combined_dates, y=combined_trend, mode='lines', name='Trend (14 dni)', line=dict(color='rgba(255, 0, 0, 0.4)', dash='dash')))
@@ -866,7 +856,6 @@ elif choice == "📏 Pomiary":
             fig.update_layout(title=f"Analiza: {option}", template="plotly_dark", hovermode="x unified")
             st.plotly_chart(fig, use_container_width=True)
 
-            # Analiza trendu
             current_val = df[option].iloc[-1]
             predicted_val = future_trend[-1]
             diff = predicted_val - current_val
@@ -874,7 +863,6 @@ elif choice == "📏 Pomiary":
             st.subheader("🤖 Analiza AI Trendu")
             trend_desc = "spadnie" if diff < 0 else "wzrośnie"
             st.write(f"Przy obecnym tempie, za 2 tygodnie Twój **{option.lower()}** {trend_desc} o ok. **{abs(diff):.2f}**.")
-
     db.close()
 
 # --- 🛒 LISTA ZAKUPÓW ---
@@ -882,7 +870,6 @@ elif choice == "🛒 Lista Zakupów":
     st.header("🛒 Lista Zakupów")
     db = SessionLocal()
     
-    # Dodawanie nowego produktu
     with st.form("add_shopping_form", clear_on_submit=True):
         col1, col2 = st.columns([3, 1])
         item_name = col1.text_input("Co musisz kupić?", placeholder="np. Jajka, Mleko, Kurczak")
@@ -893,7 +880,6 @@ elif choice == "🛒 Lista Zakupów":
             db.commit()
             st.rerun()
 
-    # Wyświetlanie listy
     st.subheader("Do kupienia")
     items_to_buy = db.query(ShoppingListItem).filter(ShoppingListItem.is_bought == False).all()
     
@@ -903,7 +889,6 @@ elif choice == "🛒 Lista Zakupów":
         for item in items_to_buy:
             col_check, col_name, col_del = st.columns([0.5, 3, 1])
             with col_check:
-                # Jeśli zaznaczysz checkbox, produkt ląduje w koszyku
                 if st.checkbox("✅", key=f"chk_{item.id}"):
                     item.is_bought = True
                     db.commit()
@@ -936,7 +921,6 @@ elif choice == "🥫 Spiżarnia":
         
         if st.button("Zapisz w spiżarni"):
             if p_name and p_weight > 0:
-                # Opcjonalnie: można tu dodać zapytanie do AI o kcal_per_100g przy dodawaniu
                 db.add(PantryItem(name=p_name, weight_g=p_weight))
                 db.commit()
                 st.success(f"Dodano {p_name} ({p_weight}g) do zapasów!")
