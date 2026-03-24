@@ -414,7 +414,7 @@ if choice == "🏠 Dashboard":
         st.caption(f"Cel: {t['fat']:.0f}g (0.8g/kg)")
 
     # Zmień tę linię:
-st.info(f"💡 Cele obliczone na podstawie Twojej ostatniej wagi: **{dash_data['weight']:.1f} kg**")
+    st.info(f"💡 Cele obliczone na podstawie Twojej ostatniej wagi: **{dash_data['weight']:.1f} kg**")
 
 # --- 🍳 NOWY POSIŁEK ---
 elif choice == "🍳 Nowy Posiłek":
