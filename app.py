@@ -231,9 +231,9 @@ def get_dashboard_data():
     today_activity = db.query(ActivityLog).filter(ActivityLog.date >= today).all()
     total_kcal_burned = sum(a.calories_burned for a in today_activity)
     
-    # Pobranie najnowszej wagi do wyliczenia celów
+    # Pobranie najnowszej wagi
     latest_meas = db.query(BodyMeasurement).order_by(BodyMeasurement.date.desc()).first()
-    weight = latest_meas.weight if latest_meas else 80.0 # fallback na 80kg
+    weight = latest_meas.weight if latest_meas else 80.0
     
     # Pobranie limitu kcal
     limit_kcal = get_daily_limit()
@@ -257,22 +257,13 @@ def get_dashboard_data():
         "fat": total_fat,
         "burned": total_kcal_burned,
         "batches_count": total_batches,
+        "weight": weight,  # <--- DODAJ TĘ LINIĘ
         "targets": {
             "kcal": limit_kcal,
             "protein": target_p,
             "carbs": target_c,
             "fat": target_f
         }
-    }
-    
-    return {
-        "eaten": total_kcal_eaten,
-        "protein": total_protein,
-        "carbs": total_carbs,
-        "fat": total_fat,
-        "burned": total_kcal_burned,
-        "batches_count": total_batches,
-        "last_workout_weight": last_workout_weight
     }
 
 def get_daily_limit():
@@ -422,7 +413,8 @@ if choice == "🏠 Dashboard":
         st.progress(f_perc if f_perc <= 1.0 else 1.0)
         st.caption(f"Cel: {t['fat']:.0f}g (0.8g/kg)")
 
-    st.info(f"💡 Cele obliczone na podstawie Twojej ostatniej wagi: **{weight:.1f} kg**")
+    # Zmień tę linię:
+st.info(f"💡 Cele obliczone na podstawie Twojej ostatniej wagi: **{dash_data['weight']:.1f} kg**")
 
 # --- 🍳 NOWY POSIŁEK ---
 elif choice == "🍳 Nowy Posiłek":
