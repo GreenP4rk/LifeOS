@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from datetime import timedelta
 import numpy as np
 import json
+import PIL.Image
 
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
@@ -55,28 +56,43 @@ def get_calories_from_ai(ingredient_name, weight_g):
         st.error(f"⚠️ Błąd podczas zapytania AI: {e}")
         return 0.0
 
-def get_nutrition_from_ai(ingredient_name, weight_g):
+def get_nutrition_from_ai(item_name=None, amount=1, unit="g", image_file=None):
     if client is None:
         st.error("Brak klucza API!")
-        return 0.0, 0.0, 0.0, 0.0
+        return {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}
     
-    prompt = f"""Podaj wartości odżywcze dla {weight_g}g produktu: {ingredient_name}.
-Zwróć TYLKO czysty kod JSON w poniższym formacie, bez żadnych innych słów i bez znaczników markdown:
-    {{"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}}"""
+    # Prompt dla tekstu i obrazu
+    prompt = f"""
+    Działaj jako ekspert dietetyczny. 
+    Zidentyfikuj produkt i podaj wartości odżywcze (kcal, białko, węglowodany, tłuszcze) dla: {amount} {unit} {item_name if item_name else 'produktu na zdjęciu'}.
+    Jeśli to zdjęcie kodu kreskowego, spróbuj go odczytać i znaleźć produkt.
+    Jeśli podano jednostki domowe (łyżka, szklanka, sztuka), przelicz je na standardowe wagi.
+    Zwróć TYLKO czysty JSON: {{"item": "nazwa", "kcal": 0, "protein": 0, "carbs": 0, "fat": 0}}
+    """
     
     try:
-        st.toast(f"🤖 AI analizuje makro: {ingredient_name}...")
-        response = client.models.generate_content(
-            model="gemini-2.5-flash", 
-            contents=prompt
-        )
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_text)
-        
-        return float(data.get("kcal", 0)), float(data.get("protein", 0)), float(data.get("carbs", 0)), float(data.get("fat", 0))
+        if image_file:
+            img = PIL.Image.open(image_file)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash", # Najszybszy do wizji
+                contents=[prompt, img]
+            )
+        else:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            
+        # Wyciąganie JSONa z odpowiedzi
+        text_response = response.text
+        json_match = re.search(r"\{.*\}", text_response, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            return data
+        return {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}
     except Exception as e:
-        st.error(f"Błąd odczytu danych z AI: {e}")
-        return 0.0, 0.0, 0.0, 0.0
+        st.error(f"Błąd AI: {e}")
+        return {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}
 
 def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
     if client is None:
@@ -428,16 +444,41 @@ elif choice == "🍳 Nowy Posiłek":
         col_in, col_list = st.columns(2)
         
         with col_in:
+            # --- NOWOŚĆ: SKANOWANIE ---
+            with st.expander("📷 Skanuj produkt / kod kreskowy"):
+                captured_image = st.camera_input("Zrób zdjęcie", key="cam_fresh")
+                if captured_image:
+                    with st.spinner("🤖 AI rozpoznaje produkt..."):
+                        data = get_nutrition_from_ai(image_file=captured_image)
+                        if data and data.get('kcal', 0) > 0:
+                            st.session_state.current_ingredients.append({
+                                'name': f"📸 {data.get('item', 'Skan')}", 
+                                'weight': 100.0, # domyślna waga dla skanu
+                                'kcal': data['kcal'], 'protein': data['protein'], 
+                                'carbs': data['carbs'], 'fat': data['fat']
+                            })
+                            st.success(f"Dodano: {data.get('item')}")
+                            st.rerun()
+
+            st.markdown("---")
             ing_name = st.text_input("Składnik (np. łosoś z airfryera)")
-            ing_weight = st.number_input("Waga (g)", min_value=0.0, key="fresh_w")
+            
+            # --- NOWOŚĆ: JEDNOSTKI ---
+            c_w, c_u = st.columns([1, 1])
+            ing_weight = c_w.number_input("Ilość", min_value=0.0, value=100.0, key="fresh_w")
+            ing_unit = c_u.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka", "łyżeczka", "szklanka", "opakowanie", "porcja"], key="fresh_u")
+            
             if st.button("➕ Dodaj składnik"):
                 if ing_name and ing_weight > 0:
-                    kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight)
-                    st.session_state.current_ingredients.append({
-                        'name': ing_name, 'weight': ing_weight, 
-                        'kcal': kcal, 'protein': prot, 'carbs': carbs, 'fat': fat
-                    })
-                    st.rerun()
+                    with st.spinner("🤖 Liczenie..."):
+                        # Wywołanie AI z uwzględnieniem jednostki
+                        kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
+                        display_name = f"{ing_weight}{ing_unit} {ing_name}" if ing_unit != "g" else ing_name
+                        st.session_state.current_ingredients.append({
+                            'name': display_name, 'weight': ing_weight, 
+                            'kcal': kcal, 'protein': prot, 'carbs': carbs, 'fat': fat
+                        })
+                        st.rerun()
 
         with col_list:
             total_kcal = sum(i['kcal'] for i in st.session_state.current_ingredients)
@@ -449,7 +490,7 @@ elif choice == "🍳 Nowy Posiłek":
             st.caption(f"B: {total_prot:.0f}g | W: {total_carbs:.0f}g | T: {total_fat:.0f}g")
             
             for i in st.session_state.current_ingredients:
-                st.text(f"• {i['name']}: {i['weight']}g (~{i['kcal']:.0f} kcal)")
+                st.text(f"• {i['name']}: {i['weight']} {i.get('unit', 'g')} (~{i['kcal']:.0f} kcal)")
             
             if st.button("✅ Zapisz posiłek"):
                 db = SessionLocal()
@@ -457,13 +498,14 @@ elif choice == "🍳 Nowy Posiłek":
                     calories=total_kcal, 
                     protein_g=total_prot, 
                     carbs_g=total_carbs, 
-                    fat_g=total_fat
+                    fat_g=total_fat,
+                    date=datetime.now()
                 ))
                 db.commit()
                 db.close()
                 get_dashboard_data.clear()
                 st.session_state.current_ingredients = []
-                st.success("Zapisano w dzienniku z pełnym makro!")
+                st.success("Zapisano w dzienniku!")
                 st.rerun()
 
     else:
@@ -530,7 +572,7 @@ elif choice == "🍳 Nowy Posiłek":
 
 # --- ➕ DODAJ BATCH ---
 elif choice == "➕ Dodaj Batch":
-    st.header("📦 Gotowanie na zapas (Bezpieczny Zapis)")
+    st.header("📦 Gotowanie na zapas")
     
     db = SessionLocal()
     drafts = db.query(BatchDraft).all()
@@ -554,7 +596,7 @@ elif choice == "➕ Dodaj Batch":
                 ing_name = selected_item.name
                 ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item.weight_g), key="pantry_w")
                 
-                if st.button("➕ Dodaj do garnka i odejmij ze spiżarni"):
+                if st.button("➕ Dodaj do garnka"):
                     if ing_weight > 0:
                         with st.spinner("Liczenie makro..."):
                             kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight)
@@ -566,14 +608,34 @@ elif choice == "➕ Dodaj Batch":
                 st.warning("Brak produktów w spiżarni!")
                 
         else:
+            # --- SKANOWANIE W BATCHU ---
+            with st.expander("📷 Skanuj składnik"):
+                cap_batch = st.camera_input("Zrób zdjęcie", key="cam_batch")
+                if cap_batch:
+                    with st.spinner("🤖 Rozpoznawanie..."):
+                        data = get_nutrition_from_ai(image_file=cap_batch)
+                        if data and data.get('kcal', 0) > 0:
+                            db.add(BatchDraft(
+                                ingredient_name=f"📸 {data.get('item', 'Skan')}", 
+                                weight=100.0, 
+                                kcal=data['kcal'], protein=data['protein'], 
+                                carbs=data['carbs'], fat=data['fat']
+                            ))
+                            db.commit()
+                            st.rerun()
+
+            st.markdown("---")
             ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
-            ing_weight = st.number_input("Waga (g)", min_value=0.0, key="batch_ing_w")
+            c_w_b, c_u_b = st.columns([1, 1])
+            ing_weight = c_w_b.number_input("Ilość", min_value=0.0, key="batch_ing_w")
+            ing_unit = c_u_b.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka", "łyżeczka", "szklanka", "opakowanie"], key="batch_ing_u")
             
             if st.button("➕ Dodaj do garnka"):
                 if ing_name and ing_weight > 0:
                     with st.spinner("Liczenie makro..."):
-                        kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight)
-                        db.add(BatchDraft(ingredient_name=ing_name, weight=ing_weight, kcal=kcal, protein=prot, carbs=carbs, fat=fat))
+                        kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
+                        display_name = f"{ing_weight}{ing_unit} {ing_name}" if ing_unit != "g" else ing_name
+                        db.add(BatchDraft(ingredient_name=display_name, weight=ing_weight, kcal=kcal, protein=prot, carbs=carbs, fat=fat))
                         db.commit()
                         st.rerun()
     
@@ -581,7 +643,7 @@ elif choice == "➕ Dodaj Batch":
         st.markdown("### 🥘 Zawartość garnka")
         
         if not drafts:
-            st.info("Twój garnek jest pusty. Dodaj pierwszy składnik.")
+            st.info("Twój garnek jest pusty.")
         else:
             total_w = sum(d.weight for d in drafts)
             total_k = sum(d.kcal for d in drafts)
@@ -615,11 +677,11 @@ elif choice == "➕ Dodaj Batch":
                     ))
                     db.query(BatchDraft).delete()
                     db.commit()
-                    st.success(f"Danie '{b_name}' bezpiecznie zapisane!")
+                    st.success(f"Danie '{b_name}' zapisane!")
                     st.balloons()
                     st.rerun()
                 else:
-                    st.error("Podaj nazwę potrawy przed zapisem!")
+                    st.error("Podaj nazwę potrawy!")
 
     if drafts:
         if st.sidebar.button("🗑️ WYCZYŚĆ CAŁY GARNEK"):
@@ -627,29 +689,6 @@ elif choice == "➕ Dodaj Batch":
             db.commit()
             st.rerun()
             
-    db.close()
-
-# --- 📦 ZAMRAŻARKA ---
-elif choice == "📦 Zamrażarka":
-    st.header("📦 Zawartość Zamrażarki")
-    db = SessionLocal()
-    batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
-    
-    if not batches:
-        st.info("Zamrażarka jest pusta.")
-    else:
-        for b in batches:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.write(f"**{b.name}**")
-                st.caption(f"Pozostało: {b.current_weight_g:.0f}g z {b.original_weight_g:.0f}g")
-            with col2:
-                if st.button("🗑️ Usuń", key=f"del_{b.id}"):
-                    target = db.query(MealBatch).filter_by(id=b.id).first()
-                    target.current_weight_g = 0
-                    db.commit()
-                    st.rerun()
-            st.divider()
     db.close()
 
 # --- 👟 AKTYWNOŚĆ ---
