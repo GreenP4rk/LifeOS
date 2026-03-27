@@ -952,6 +952,14 @@ elif choice == "📏 Pomiary":
 elif choice == "🛒 Lista Zakupów":
     st.header("🛒 Inteligentna Lista Zakupów")
 
+    # --- BEZPIECZNA SYNCHRONIZACJA TABELI ---
+    # Ten kod NIGDY nie usunie Twoich danych, doda jedynie brakującą tabelę.
+    try:
+        ShoppingList.__table__.create(bind=engine, checkfirst=True)
+    except Exception as e:
+        st.write(f"Uwaga diagnostyczna: {e}") # Pokaże błąd, jeśli wystąpi, ale nie "wysadzi" aplikacji
+    # ----------------------------------------
+
     db = SessionLocal()
     
     # UI do dodawania produktów
