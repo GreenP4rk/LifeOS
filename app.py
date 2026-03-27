@@ -206,13 +206,12 @@ class PantryItem(Base):
     kcal_per_100g = Column(Float)
     date_added = Column(DateTime, default=datetime.now)
 
-class ShoppingList(Base):
-    __tablename__ = 'shopping_list'  # To musi być identyczne jak w Supabase!
+class ShoppingListItem(Base):
+    __tablename__ = 'shopping_list'
     id = Column(Integer, primary_key=True)
-    item_name = Column(String, nullable=False)
-    category = Column(String)
+    name = Column(String, nullable=False)  # Używamy 'name', bo tak masz w bazie
     is_bought = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.now)
+    date_added = Column(DateTime, default=datetime.now)
     
 # --- 4. BAZA DANYCH - POŁĄCZENIE ---
 @st.cache_resource
@@ -952,35 +951,36 @@ elif choice == "📏 Pomiary":
 elif choice == "🛒 Lista Zakupów":
     st.header("🛒 Inteligentna Lista Zakupów")
 
-    # --- BEZPIECZNA SYNCHRONIZACJA TABELI ---
-    # Ten kod NIGDY nie usunie Twoich danych, doda jedynie brakującą tabelę.
-    try:
-        ShoppingList.__table__.create(bind=engine, checkfirst=True)
-    except Exception as e:
-        st.write(f"Uwaga diagnostyczna: {e}") # Pokaże błąd, jeśli wystąpi, ale nie "wysadzi" aplikacji
-    # ----------------------------------------
-
     db = SessionLocal()
     
     # UI do dodawania produktów
     col_add, col_btn = st.columns([3, 1])
     new_item = col_add.text_input("Co dopisać do listy?", placeholder="np. Pierś z kurczaka, mleko...")
     if col_btn.button("➕ Dodaj") and new_item:
-        db.add(ShoppingList(item_name=new_item))
+        db.add(ShoppingListItem(name=new_item))
         db.commit()
         st.rerun()
 
-    # Wyświetlanie listy
-    items = db.query(ShoppingList).filter(ShoppingList.is_bought == False).all()
+    # Wyświetlanie listy - filtrujemy produkty niekupione
+    items = db.query(ShoppingListItem).filter(ShoppingListItem.is_bought == False).all()
+    
     if items:
         st.subheader("Twoje produkty:")
         for it in items:
             c1, c2 = st.columns([4, 1])
-            c1.checkbox(it.item_name, key=f"check_{it.id}")
+            # Checkbox do oznaczania jako kupione
+            if c1.checkbox(it.name, key=f"check_{it.id}"):
+                it.is_bought = True
+                db.commit()
+                st.rerun()
+            
+            # Przycisk usuwania
             if c2.button("🗑️", key=f"del_it_{it.id}"):
                 db.delete(it)
                 db.commit()
                 st.rerun()
+    else:
+        st.info("Twoja lista zakupów jest pusta.")
     
     st.divider()
 
@@ -991,10 +991,8 @@ elif choice == "🛒 Lista Zakupów":
     if st.button("🔍 Analizuj okazje"):
         if flyer_link:
             with st.spinner("🤖 AI analizuje ofertę i sprawdza sezonowość..."):
-                # Pobieramy nazwy produktów z listy, żeby AI wiedziało czego szukamy
-                my_items = [i.item_name for i in items]
+                my_items = [i.name for i in items]
                 
-                # W pełni dynamiczny prompt
                 prompt = f"""
                 Działaj jako ekspert od oszczędnego kupowania i dietetyk.
                 Użytkownik ma na liście: {', '.join(my_items)}.
@@ -1007,6 +1005,8 @@ elif choice == "🛒 Lista Zakupów":
                 2. Wskaż, jakie owoce i warzywa są TERAZ w szczycie sezonu (najtańsze i najzdrowsze).
                 3. Przeanalizuj ofertę z linku pod kątem produktów z listy użytkownika.
                 4. Wskaż "okazje tygodnia" pasujące do sezonu.
+                
+                Odpowiedz krótko i konkretnie w punktach.
                 """
                 
                 response = client.models.generate_content(
