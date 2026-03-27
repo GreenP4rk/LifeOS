@@ -206,12 +206,13 @@ class PantryItem(Base):
     kcal_per_100g = Column(Float)
     date_added = Column(DateTime, default=datetime.now)
 
-class ShoppingListItem(Base):
+class ShoppingList(Base):
     __tablename__ = 'shopping_list'
     id = Column(Integer, primary_key=True)
-    name = Column(String, nullable=False)
+    item_name = Column(String, nullable=False)
+    category = Column(String)
     is_bought = Column(Boolean, default=False)
-    date_added = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=datetime.now)
     
 # --- 4. BAZA DANYCH - POŁĄCZENIE ---
 @st.cache_resource
@@ -985,23 +986,23 @@ elif choice == "🛒 Lista Zakupów":
                 # Pobieramy nazwy produktów z listy, żeby AI wiedziało czego szukamy
                 my_items = [i.item_name for i in items]
                 
+                # W pełni dynamiczny prompt
                 prompt = f"""
                 Działaj jako ekspert od oszczędnego kupowania i dietetyk.
                 Użytkownik ma na liście: {', '.join(my_items)}.
                 Link do gazetki: {flyer_link}.
-                Aktualna data: {datetime.now().strftime('%Y-%m-%d')} (Koniec marca).
-                
-                Zadania:
-                1. Na podstawie linku (użyj swojej wiedzy o aktualnych promocjach w tej sieci) wskaż, co z listy użytkownika jest teraz w dobrej cenie.
-                2. Wskaż 3-4 produkty spoza listy, które są teraz w super promocji (tzw. "must-buy").
-                3. Wymień owoce i warzywa, na które jest TERAZ sezon (marzec/kwiecień w Polsce), aby było tanio i zdrowo.
-                4. Krótko uzasadnij wybór.
-                
-                Odpowiedz w ładnym formacie Markdown.
+
+                DZIŚ JEST: {datetime.now().strftime('%A, %d %B %Y')}. 
+
+                Na podstawie powyższej daty:
+                1. Określ aktualną porę roku w Polsce.
+                2. Wskaż, jakie owoce i warzywa są TERAZ w szczycie sezonu (najtańsze i najzdrowsze).
+                3. Przeanalizuj ofertę z linku pod kątem produktów z listy użytkownika.
+                4. Wskaż "okazje tygodnia" pasujące do sezonu.
                 """
                 
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-2.5-flash",
                     contents=prompt
                 )
                 st.markdown(response.text)
