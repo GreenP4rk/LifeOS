@@ -481,7 +481,8 @@ elif choice == "🍳 Nowy Posiłek":
                         st.rerun()
 
         with col_list:
-            total_kcal = sum(i['kcal'] for i in st.session_state.current_ingredients)
+            # Bezpieczne sumowanie - ignoruje błędy i wartości None
+            total_kcal = sum(float(i.get('kcal', 0) or 0) for i in st.session_state.current_ingredients)
             total_prot = sum(i['protein'] for i in st.session_state.current_ingredients)
             total_carbs = sum(i['carbs'] for i in st.session_state.current_ingredients)
             total_fat = sum(i['fat'] for i in st.session_state.current_ingredients)
