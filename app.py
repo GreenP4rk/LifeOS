@@ -51,9 +51,7 @@ def get_calories_from_ai(ingredient_name, weight_g):
         return {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}
     except:
         return {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}
-    except Exception as e:
-        st.error(f"⚠️ Błąd podczas zapytania AI: {e}")
-        return 0.0
+    
 
 def get_nutrition_from_ai(item_name=None, amount=1, unit="g", image_file=None):
     if client is None:
