@@ -990,34 +990,42 @@ elif choice == "🛒 Lista Zakupów":
     
     if st.button("🔍 Analizuj okazje"):
         if flyer_link:
-            with st.spinner("🤖 AI analizuje ofertę i sprawdza sezonowość..."):
+            with st.spinner("🤖 AI analizuje gazetkę pod kątem Twojej listy i makroskładników..."):
                 my_items = [i.name for i in items]
                 
+                # Budujemy prompt z nowymi wytycznymi
                 prompt = f"""
-                Działaj jako ekspert od oszczędnego kupowania i dietetyk.
-                Użytkownik ma na liście: {', '.join(my_items)}.
-                Link do gazetki: {flyer_link}.
+                Jesteś ekspertem ds. żywienia i łowcą promocji.
+                Link do gazetki: {flyer_link}
+                Twoja lista zakupów: {', '.join(my_items) if my_items else 'Lista jest pusta'}
+                DZIŚ JEST: {datetime.now().strftime('%A, %d %B %Y')}
 
-                DZIŚ JEST: {datetime.now().strftime('%A, %d %B %Y')}. 
+                ZADANIA:
+                1. Jeśli lista zakupów NIE jest pusta: Sprawdź, czy produkty z listy są w promocji. Jeśli tak, wypisz je: "Produkt - Cena (strona X)".
+                2. Jeśli produktów z listy nie ma w promocji LUB lista jest pusta: Wypisz po 5 najlepszych promocyjnych produktów w kategoriach:
+                   - BIAŁKO (np. mięso, ryby, twarogi, strączki)
+                   - WĘGLOWODANY (np. owoce, kasze, ryż, pieczywo dobrej jakości)
+                   - TŁUSZCZE (np. oleje, awokado, orzechy)
+                3. SEZONOWOŚĆ: Na końcu dodaj krótką listę 3 warzyw/owoców, które są teraz w szczycie sezonu i warto je kupić.
 
-                Na podstawie powyższej daty:
-                1. Określ aktualną porę roku w Polsce.
-                2. Wskaż, jakie owoce i warzywa są TERAZ w szczycie sezonu (najtańsze i najzdrowsze).
-                3. Przeanalizuj ofertę z linku pod kątem produktów z listy użytkownika.
-                4. Wskaż "okazje tygodnia" pasujące do sezonu.
-                
-                Odpowiedz krótko i konkretnie w punktach.
+                RESTRYKCJE:
+                - PRZY KAŻDYM PRODUKCIE MUSISZ PODAĆ NUMER STRONY W NAWIASIE, np. (strona 4). Jeśli nie widzisz numeru, opisz miejsce (np. okładka, ostatnia strona).
+                - Jeśli produkt wymaga zakupu wielosztuk (np. 2+1), zaznacz to.
+                - NIE ZMYŚLAJ cen. Jeśli nie jesteś pewien, nie wypisuj produktu.
                 """
                 
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt
-                )
-                st.markdown(response.text)
+                try:
+                    # Używamy modelu 2.5 Flash dla szybkości i dobrej analizy tekstu w obrazach
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt
+                    )
+                    st.success("✅ Analiza zakończona!")
+                    st.markdown(response.text)
+                except Exception as e:
+                    st.error(f"Błąd analizy AI: {e}")
         else:
             st.warning("Najpierw wklej link do gazetki!")
-    
-    db.close()
 
 # --- 🥫 SPIŻARNIA ---
 elif choice == "🥫 Spiżarnia":
