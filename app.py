@@ -949,46 +949,65 @@ elif choice == "📏 Pomiary":
 
 # --- 🛒 LISTA ZAKUPÓW ---
 elif choice == "🛒 Lista Zakupów":
-    st.header("🛒 Lista Zakupów")
+    st.header("🛒 Inteligentna Lista Zakupów")
+
     db = SessionLocal()
     
-    with st.form("add_shopping_form", clear_on_submit=True):
-        col1, col2 = st.columns([3, 1])
-        item_name = col1.text_input("Co musisz kupić?", placeholder="np. Jajka, Mleko, Kurczak")
-        submit_item = col2.form_submit_button("➕ Dodaj")
-        
-        if submit_item and item_name:
-            db.add(ShoppingListItem(name=item_name))
-            db.commit()
-            st.rerun()
+    # UI do dodawania produktów
+    col_add, col_btn = st.columns([3, 1])
+    new_item = col_add.text_input("Co dopisać do listy?", placeholder="np. Pierś z kurczaka, mleko...")
+    if col_btn.button("➕ Dodaj") and new_item:
+        db.add(ShoppingList(item_name=new_item))
+        db.commit()
+        st.rerun()
 
-    st.subheader("Do kupienia")
-    items_to_buy = db.query(ShoppingListItem).filter(ShoppingListItem.is_bought == False).all()
-    
-    if not items_to_buy:
-        st.info("Lista jest pusta. Wszystko kupione!")
-    else:
-        for item in items_to_buy:
-            col_check, col_name, col_del = st.columns([0.5, 3, 1])
-            with col_check:
-                if st.checkbox("✅", key=f"chk_{item.id}"):
-                    item.is_bought = True
-                    db.commit()
-                    st.toast(f"Kupiono: {item.name}")
-                    st.rerun()
-            col_name.write(f"**{item.name}**")
-            with col_del:
-                if st.button("🗑️", key=f"del_shop_{item.id}"):
-                    db.delete(item)
-                    db.commit()
-                    st.rerun()
+    # Wyświetlanie listy
+    items = db.query(ShoppingList).filter(ShoppingList.is_bought == False).all()
+    if items:
+        st.subheader("Twoje produkty:")
+        for it in items:
+            c1, c2 = st.columns([4, 1])
+            c1.checkbox(it.item_name, key=f"check_{it.id}")
+            if c2.button("🗑️", key=f"del_it_{it.id}"):
+                db.delete(it)
+                db.commit()
+                st.rerun()
     
     st.divider()
-    if st.button("🧹 Wyczyść kupione z historii"):
-        db.query(ShoppingListItem).filter(ShoppingListItem.is_bought == True).delete()
-        db.commit()
-        st.success("Historia wyczyszczona.")
-        st.rerun()
+
+    # --- FUNKCJA ANALIZY GAZETKI ---
+    st.subheader("💡 Analiza okazji i sezonowości")
+    flyer_link = st.text_input("Wklej link do gazetki (Biedronka, Lidl, itp.)")
+    
+    if st.button("🔍 Analizuj okazje"):
+        if flyer_link:
+            with st.spinner("🤖 AI analizuje ofertę i sprawdza sezonowość..."):
+                # Pobieramy nazwy produktów z listy, żeby AI wiedziało czego szukamy
+                my_items = [i.item_name for i in items]
+                
+                prompt = f"""
+                Działaj jako ekspert od oszczędnego kupowania i dietetyk.
+                Użytkownik ma na liście: {', '.join(my_items)}.
+                Link do gazetki: {flyer_link}.
+                Aktualna data: {datetime.now().strftime('%Y-%m-%d')} (Koniec marca).
+                
+                Zadania:
+                1. Na podstawie linku (użyj swojej wiedzy o aktualnych promocjach w tej sieci) wskaż, co z listy użytkownika jest teraz w dobrej cenie.
+                2. Wskaż 3-4 produkty spoza listy, które są teraz w super promocji (tzw. "must-buy").
+                3. Wymień owoce i warzywa, na które jest TERAZ sezon (marzec/kwiecień w Polsce), aby było tanio i zdrowo.
+                4. Krótko uzasadnij wybór.
+                
+                Odpowiedz w ładnym formacie Markdown.
+                """
+                
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt
+                )
+                st.markdown(response.text)
+        else:
+            st.warning("Najpierw wklej link do gazetki!")
+    
     db.close()
 
 # --- 🥫 SPIŻARNIA ---
