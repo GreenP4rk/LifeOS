@@ -34,7 +34,8 @@ def get_calories_from_ai(ingredient_name, weight_g):
         st.error("Brak klucza API (GEMINI_KEY) w Secrets!")
         return 0.0
     
-    prompt = f"Podaj liczbę kalorii dla {weight_g}g produktu: {ingredient_name}. Zwróć tylko liczbę."
+    # Bardzo rygorystyczny prompt
+    prompt = f"Ile kalorii, białka, węglowodanów i tłuszczy ma {weight_g}g produktu: {ingredient_name}? Zwróć dane WYŁĄCZNIE w formacie JSON: {{\"kcal\": 0, \"protein\": 0, \"carbs\": 0, \"fat\": 0}}. Nie dopisuj żadnego tekstu."
     
     try:
         st.toast(f"🤖 AI liczy: {ingredient_name}...")
@@ -42,16 +43,14 @@ def get_calories_from_ai(ingredient_name, weight_g):
             model="gemini-2.5-flash", 
             contents=prompt
         )
-        text = response.text.strip().replace(',', '.')
-        match = re.search(r"[-+]?\d*\.\d+|\d+", text)
-        
-        if match:
-            kcal = float(match.group())
-            st.toast(f"✅ Obliczono: {kcal} kcal")
-            return kcal
-        else:
-            st.warning(f"AI zwróciło tekst zamiast liczby: {text}")
-            return 0.0
+        text = response.text.strip()
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            return data
+        return {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}
+    except:
+        return {"kcal": 0, "protein": 0, "carbs": 0, "fat": 0}
     except Exception as e:
         st.error(f"⚠️ Błąd podczas zapytania AI: {e}")
         return 0.0
@@ -490,10 +489,20 @@ elif choice == "🍳 Nowy Posiłek":
                         st.rerun()
 
         with col_list:
-            total_kcal = sum(i['kcal'] for i in st.session_state.current_ingredients)
-            total_prot = sum(i['protein'] for i in st.session_state.current_ingredients)
-            total_carbs = sum(i['carbs'] for i in st.session_state.current_ingredients)
-            total_fat = sum(i['fat'] for i in st.session_state.current_ingredients)
+            # Funkcja pomocnicza, która wyciągnie liczbę z każdego tekstu
+            def to_num(val):
+                try:
+                    if val is None: return 0.0
+                    # Zamieniamy przecinki na kropki i usuwamy tekst (np. "kcal", "g")
+                    clean = re.sub(r'[^0-9.]', '', str(val).replace(',', '.'))
+                    return float(clean) if clean else 0.0
+                except:
+                    return 0.0
+
+            total_kcal = sum(to_num(i.get('kcal', 0)) for i in st.session_state.current_ingredients)
+            total_prot = sum(to_num(i.get('protein', 0)) for i in st.session_state.current_ingredients)
+            total_carbs = sum(to_num(i.get('carbs', 0)) for i in st.session_state.current_ingredients)
+            total_fat = sum(to_num(i.get('fat', 0)) for i in st.session_state.current_ingredients)
             
             st.subheader(f"Razem: {total_kcal:.0f} kcal")
             st.caption(f"B: {total_prot:.0f}g | W: {total_carbs:.0f}g | T: {total_fat:.0f}g")
