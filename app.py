@@ -117,6 +117,15 @@ def get_workout_calories_from_ai(workout_summary, weight_kg, height_cm):
         st.error(f"Błąd AI przy treningu: {e}")
         return 0.0
 
+def safe_float(value):
+    try:
+        if value is None: return 0.0
+        # Usuwamy ewentualne jednostki "kcal" i zamieniamy przecinki na kropki
+        clean_val = str(value).replace('kcal', '').replace(',', '.').strip()
+        return float(clean_val)
+    except (ValueError, TypeError):
+        return 0.0
+
 # --- 3. BAZA DANYCH - MODELE ---
 Base = declarative_base()
 
@@ -481,8 +490,7 @@ elif choice == "🍳 Nowy Posiłek":
                         st.rerun()
 
         with col_list:
-            # Bezpieczne sumowanie - ignoruje błędy i wartości None
-            total_kcal = sum(float(i.get('kcal', 0) or 0) for i in st.session_state.current_ingredients)
+            total_kcal = sum(safe_float(i.get('kcal', 0)) for i in st.session_state.current_ingredients)
             total_prot = sum(i['protein'] for i in st.session_state.current_ingredients)
             total_carbs = sum(i['carbs'] for i in st.session_state.current_ingredients)
             total_fat = sum(i['fat'] for i in st.session_state.current_ingredients)
