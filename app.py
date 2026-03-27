@@ -207,7 +207,7 @@ class PantryItem(Base):
     date_added = Column(DateTime, default=datetime.now)
 
 class ShoppingList(Base):
-    __tablename__ = 'shopping_list'
+    __tablename__ = 'shopping_list'  # To musi być identyczne jak w Supabase!
     id = Column(Integer, primary_key=True)
     item_name = Column(String, nullable=False)
     category = Column(String)
