@@ -151,32 +151,41 @@ def get_data_from_off(barcode):
     return None
 
 def analyze_product_image(image_file):
-    """Najpierw kod kreskowy -> Baza, potem AI."""
-    img = PIL.Image.open(image_file)
-    
-    # 1. Próba odczytania kodu
-    res = client.models.generate_content(
-        model="gemini-2.5-flash", 
-        contents=["Podaj TYLKO cyfry kodu kreskowego ze zdjęcia. Jeśli go nie ma, napisz 'NONE'.", img]
-    )
-    barcode = res.text.strip()
-    
-    if barcode != "NONE" and barcode.isdigit():
-        off_data = get_data_from_off(barcode)
-        if off_data: return off_data
-
-    # 2. Pełna analiza AI jeśli brak kodu/bazy
-    prompt = """
-    Zidentyfikuj produkt i odczytaj wartości na 100g.
-    Zwróć TYLKO JSON: {"name": "...", "kcal": 0, "protein": 0, "fat": 0, "carbs": 0}
-    """
-    response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt, img])
+    """Najpierw sprawdza kod kreskowy, potem analizuje tabelę. Używa gemini-2.5-flash."""
+    if client is None:
+        return None
+        
     try:
+        # Siłowa konwersja na RGB zapobiega błędom 400 (Bad Request) przy przezroczystości (RGBA)
+        img = PIL.Image.open(image_file).convert('RGB')
+        
+        # KROK 1: Szybki skan kodu kreskowego
+        res = client.models.generate_content(
+            model="gemini-2.5-flash", 
+            contents=["Podaj TYLKO cyfry kodu kreskowego ze zdjęcia. Jeśli go nie ma, napisz 'NONE'.", img]
+        )
+        barcode = res.text.strip()
+        
+        if barcode != "NONE" and barcode.isdigit():
+            off_data = get_data_from_off(barcode)
+            if off_data: return off_data
+
+        # KROK 2: Pełna analiza jeśli brak kodu
+        prompt = """
+        Zidentyfikuj produkt i odczytaj wartości na 100g.
+        Zwróć TYLKO JSON: {"name": "...", "kcal": 0, "protein": 0, "fat": 0, "carbs": 0}
+        """
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=[prompt, img])
+        
         clean = re.sub(r'```json|```', '', response.text).strip()
         data = json.loads(clean)
         data["source"] = "Analiza wizualna AI"
         return data
-    except: return None
+
+    except Exception as e:
+        # Łapiemy błąd tu, aby Streamlit Cloud go nie ocenzurował w konsoli
+        st.error(f"Szczegóły błędu API: {str(e)}")
+        return None
 
 # --- 3. BAZA DANYCH - MODELE ---
 Base = declarative_base()
