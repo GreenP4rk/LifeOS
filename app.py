@@ -10,6 +10,7 @@ from datetime import timedelta
 import numpy as np
 import json
 import PIL.Image
+import requests
 
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
@@ -128,34 +129,54 @@ def safe_float(value):
     except (ValueError, TypeError):
         return 0.0
 
-def analyze_product_image(image_file):
-    """Analizuje zdjęcie tabeli lub produktu i zwraca dane na 100g."""
-    if client is None:
-        return None
-    
-    img = PIL.Image.open(image_file) # PIL jest już w Twoich importach 
-    
-    prompt = """
-    Zidentyfikuj produkt na zdjęciu lub odczytaj tabelę wartości odżywczych.
-    Zwróć wartości wyłącznie dla 100g lub 100ml produktu.
-    Odpowiedź musi być w formacie JSON:
-    {"name": "nazwa produktu", "kcal": 0, "protein": 0, "fat": 0, "carbs": 0}
-    Jeśli czegoś nie widzisz, wpisz 0.
-    """
-    
-    # Używamy modelu flash do szybkiej analizy obrazu
-    response = client.models.generate_content(
-        model="gemini-2.5-flash", 
-        contents=[prompt, img]
-    )
-    
+def get_data_from_off(barcode):
+    """Sprawdza Open Food Facts."""
     try:
-        # Oczyszczanie odpowiedzi z formatowania markdown
-        clean_res = re.sub(r'```json|```', '', response.text).strip()
-        return json.loads(clean_res)
-    except Exception as e:
-        st.error(f"Błąd analizy: {e}")
-        return None
+        url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == 1:
+                p = data["product"]
+                n = p.get("nutriments", {})
+                return {
+                    "name": p.get("product_name", "Produkt z bazy"),
+                    "kcal": n.get("energy-kcal_100g", 0),
+                    "protein": n.get("proteins_100g", 0),
+                    "fat": n.get("fat_100g", 0),
+                    "carbs": n.get("carbohydrates_100g", 0),
+                    "source": "Open Food Facts (Baza)"
+                }
+    except: pass
+    return None
+
+def analyze_product_image(image_file):
+    """Najpierw kod kreskowy -> Baza, potem AI."""
+    img = PIL.Image.open(image_file)
+    
+    # 1. Próba odczytania kodu
+    res = client.models.generate_content(
+        model="gemini-2.5-flash", 
+        contents=["Podaj TYLKO cyfry kodu kreskowego ze zdjęcia. Jeśli go nie ma, napisz 'NONE'.", img]
+    )
+    barcode = res.text.strip()
+    
+    if barcode != "NONE" and barcode.isdigit():
+        off_data = get_data_from_off(barcode)
+        if off_data: return off_data
+
+    # 2. Pełna analiza AI jeśli brak kodu/bazy
+    prompt = """
+    Zidentyfikuj produkt i odczytaj wartości na 100g.
+    Zwróć TYLKO JSON: {"name": "...", "kcal": 0, "protein": 0, "fat": 0, "carbs": 0}
+    """
+    response = client.models.generate_content(model="gemini-2.0-flash", contents=[prompt, img])
+    try:
+        clean = re.sub(r'```json|```', '', response.text).strip()
+        data = json.loads(clean)
+        data["source"] = "Analiza wizualna AI"
+        return data
+    except: return None
 
 # --- 3. BAZA DANYCH - MODELE ---
 Base = declarative_base()
@@ -479,41 +500,46 @@ elif choice == "🍳 Nowy Posiłek":
     if source == "Kalkulator AI (świeży)":
         if 'current_ingredients' not in st.session_state:
             st.session_state.current_ingredients = []
+        if 'scan_step' not in st.session_state:
+            st.session_state.scan_step = "IDLE"
 
         col_in, col_list = st.columns(2)
         
         with col_in:
             # --- MASZYNA STANÓW SKANOWANIA ---
             
-            # STAN: IDLE (Nic się nie dzieje)
+            # STAN: IDLE - Przycisk startowy
             if st.session_state.scan_step == "IDLE":
                 if st.button("📷 Skanuj produkt / tabelę"):
                     st.session_state.scan_step = "SCANNING"
+                    st.session_state.temp_product = None # Czyścimy śmieci
                     st.rerun()
 
-            # STAN: SCANNING (Pokazuje aparat)
+            # STAN: SCANNING - Aparat wywołany tylko tutaj
             elif st.session_state.scan_step == "SCANNING":
                 st.info("Skieruj aparat na produkt lub tabelę wartości")
-                # Klucz 'main_camera' pozwala nam kontrolować widget
                 captured_image = st.camera_input("Zrób zdjęcie", key="main_camera")
                 
                 if captured_image:
-                    with st.spinner("🤖 AI analizuje zdjęcie..."):
+                    with st.spinner("🤖 Analizuję (Kod kreskowy / AI)..."):
+                        # analyze_product_image teraz najpierw sprawdza bazę OFF, potem tabelę
                         data = analyze_product_image(captured_image)
                         if data:
                             st.session_state.temp_product = data
                             st.session_state.scan_step = "VERIFYING"
                             st.rerun()
                 
-                if st.button("❌ Anuluj skanowanie"):
+                if st.button("❌ Anuluj"):
                     st.session_state.scan_step = "IDLE"
                     st.session_state.temp_product = None
                     st.rerun()
 
-            # STAN: VERIFYING (Pokazuje wynik analizy i prosi o wagę)
+            # STAN: VERIFYING - Potwierdzenie przed dodaniem do listy
             elif st.session_state.scan_step == "VERIFYING":
                 p = st.session_state.temp_product
+                source_info = p.get('source', 'Analiza AI')
                 st.success(f"🤖 Rozpoznano: **{p['name']}**")
+                st.caption(f"Źródło danych: {source_info}")
                 
                 cols = st.columns(4)
                 cols[0].metric("Kcal (100g)", p['kcal'])
@@ -525,13 +551,9 @@ elif choice == "🍳 Nowy Posiłek":
                     amount = st.number_input("Ile gramów/sztuk zjadłeś?", min_value=0.0, step=1.0, value=100.0)
                     unit = st.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka", "szklanka"])
                     
-                    submit_button = st.form_submit_button("✅ Potwierdź i dodaj do listy")
-                    
-                    if submit_button:
-                        # Przeliczamy wartości na podstawie podanej wagi
+                    if st.form_submit_button("✅ Potwierdź i dodaj do listy"):
+                        # Przelicznik dla 100g/ml
                         ratio = amount / 100.0 if unit in ["g", "ml"] else amount
-                        # Jeśli to sztuki/łyżki, AI w kroku 100g powinno podać wartości na jednostkę, 
-                        # ale dla bezpieczeństwa przyjmijmy prosty przelicznik:
                         
                         st.session_state.current_ingredients.append({
                             'name': f"{amount}{unit} {p['name']}",
@@ -541,7 +563,7 @@ elif choice == "🍳 Nowy Posiłek":
                             'carbs': p['carbs'] * ratio,
                             'fat': p['fat'] * ratio
                         })
-                        # Resetujemy stan po dodaniu
+                        # Pełne czyszczenie po dodaniu
                         st.session_state.scan_step = "IDLE"
                         st.session_state.temp_product = None
                         st.rerun()
@@ -552,29 +574,28 @@ elif choice == "🍳 Nowy Posiłek":
                     st.rerun()
 
             st.markdown("---")
-            # Tradycyjne wpisywanie ręczne (zawsze dostępne jako backup)
             with st.expander("Wpisz ręcznie (bez skanowania)"):
                 ing_name = st.text_input("Nazwa składnika")
                 c_w, c_u = st.columns([1, 1])
-                ing_weight = c_w.number_input("Ilość", min_value=0.0, value=100.0)
-                ing_unit = c_u.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka"])
+                ing_weight = c_w.number_input("Ilość", min_value=0.0, value=100.0, key="man_w")
+                ing_unit = c_u.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka"], key="man_u")
                 
                 if st.button("➕ Dodaj ręcznie"):
                     if ing_name:
-                        data = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
-                        st.session_state.current_ingredients.append({
-                            'name': f"{ing_weight}{ing_unit} {ing_name}", 
-                            'weight': ing_weight, 
-                            'kcal': data['kcal'], 'protein': data['protein'], 
-                            'carbs': data['carbs'], 'fat': data['fat']
-                        })
-                        st.rerun()
+                        with st.spinner("Liczenie..."):
+                            data = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
+                            st.session_state.current_ingredients.append({
+                                'name': f"{ing_weight}{ing_unit} {ing_name}", 
+                                'weight': ing_weight, 
+                                'kcal': data['kcal'], 'protein': data['protein'], 
+                                'carbs': data['carbs'], 'fat': data['fat']
+                            })
+                            st.rerun()
 
         with col_list:
             total_kcal = sum(i['kcal'] for i in st.session_state.current_ingredients)
             st.subheader(f"Podsumowanie: {total_kcal:.0f} kcal")
             
-            # Wyświetlanie listy z przyciskiem usuwania
             for idx, item in enumerate(st.session_state.current_ingredients):
                 c1, c2 = st.columns([4, 1])
                 c1.text(f"• {item['name']} ({item['kcal']:.0f} kcal)")
@@ -596,7 +617,7 @@ elif choice == "🍳 Nowy Posiłek":
                     db.close()
                     st.session_state.current_ingredients = []
                     get_dashboard_data.clear()
-                    st.success("Posiłek zapisany w dzienniku!")
+                    st.success("Posiłek zapisany!")
                     st.rerun()
 
     else:
@@ -611,7 +632,11 @@ elif choice == "🍳 Nowy Posiłek":
                 eat_w = st.number_input(f"Gramy", min_value=0.0, max_value=float(batch.current_weight_g), key=f"e_{batch.id}")
                 if st.button("🍽️ Zjedz", key=f"b_{batch.id}"):
                     ratio = eat_w / batch.original_weight_g
-                    db.add(MealLog(calories=batch.total_calories * ratio, date=datetime.now()))
+                    db.add(MealLog(calories=batch.total_calories * ratio, 
+                                   date=datetime.now(),
+                                   protein_g=batch.total_protein * ratio if hasattr(batch, 'total_protein') else 0,
+                                   carbs_g=batch.total_carbs * ratio if hasattr(batch, 'total_carbs') else 0,
+                                   fat_g=batch.total_fat * ratio if hasattr(batch, 'total_fat') else 0))
                     batch.current_weight_g -= eat_w
                     db.commit()
                     st.rerun()
