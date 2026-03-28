@@ -14,8 +14,8 @@ import PIL.Image
 # --- 1. KONFIGURACJA STRONY ---
 st.set_page_config(page_title="LifeOS", layout="wide")
 
-if 'scan_active' not in st.session_state:
-    st.session_state.scan_active = False
+if 'scan_step' not in st.session_state:
+    st.session_state.scan_step = "IDLE" # Możliwe: IDLE, SCANNING, VERIFYING
 if 'temp_product' not in st.session_state:
     st.session_state.temp_product = None
 
@@ -483,87 +483,121 @@ elif choice == "🍳 Nowy Posiłek":
         col_in, col_list = st.columns(2)
         
         with col_in:
-            # --- NOWY SPOSÓB SKANOWANIA ---
-            if not st.session_state.scan_active and st.session_state.temp_product is None:
+            # --- MASZYNA STANÓW SKANOWANIA ---
+            
+            # STAN: IDLE (Nic się nie dzieje)
+            if st.session_state.scan_step == "IDLE":
                 if st.button("📷 Skanuj produkt / tabelę"):
-                    st.session_state.scan_active = True
+                    st.session_state.scan_step = "SCANNING"
                     st.rerun()
 
-            if st.session_state.scan_active:
-                captured_image = st.camera_input("Zrób zdjęcie kodu lub tabeli")
+            # STAN: SCANNING (Pokazuje aparat)
+            elif st.session_state.scan_step == "SCANNING":
+                st.info("Skieruj aparat na produkt lub tabelę wartości")
+                # Klucz 'main_camera' pozwala nam kontrolować widget
+                captured_image = st.camera_input("Zrób zdjęcie", key="main_camera")
+                
                 if captured_image:
-                    with st.spinner("🤖 Analizuję wartości na 100g..."):
+                    with st.spinner("🤖 AI analizuje zdjęcie..."):
                         data = analyze_product_image(captured_image)
                         if data:
                             st.session_state.temp_product = data
-                            st.session_state.scan_active = False
+                            st.session_state.scan_step = "VERIFYING"
                             st.rerun()
-                if st.button("Anuluj skanowanie"):
-                    st.session_state.scan_active = False
+                
+                if st.button("❌ Anuluj skanowanie"):
+                    st.session_state.scan_step = "IDLE"
+                    st.session_state.temp_product = None
                     st.rerun()
 
-            if st.session_state.temp_product:
+            # STAN: VERIFYING (Pokazuje wynik analizy i prosi o wagę)
+            elif st.session_state.scan_step == "VERIFYING":
                 p = st.session_state.temp_product
-                st.info(f"Odczytano (na 100g/ml): **{p['name']}**")
+                st.success(f"🤖 Rozpoznano: **{p['name']}**")
+                
                 cols = st.columns(4)
-                cols[0].metric("Kcal", p['kcal'])
+                cols[0].metric("Kcal (100g)", p['kcal'])
                 cols[1].metric("B", p['protein'])
                 cols[2].metric("W", p['carbs'])
                 cols[3].metric("T", p['fat'])
 
-                with st.form("verify_scan_form"):
+                with st.form("confirm_meal_form"):
                     amount = st.number_input("Ile gramów/sztuk zjadłeś?", min_value=0.0, step=1.0, value=100.0)
                     unit = st.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka", "szklanka"])
-                    if st.form_submit_button("✅ Potwierdź i dodaj"):
-                        with st.spinner("Przeliczam..."):
-                            final_data = get_nutrition_from_ai(p['name'], amount, unit)
-                            st.session_state.current_ingredients.append({
-                                'name': f"{amount}{unit} {final_data.get('item', p['name'])}", 
-                                'weight': amount, 'kcal': final_data['kcal'], 'protein': final_data['protein'], 
-                                'carbs': final_data['carbs'], 'fat': final_data['fat']
-                            })
-                            st.session_state.temp_product = None
-                            st.rerun()
-                if st.button("Usuń i skanuj ponownie"):
+                    
+                    submit_button = st.form_submit_button("✅ Potwierdź i dodaj do listy")
+                    
+                    if submit_button:
+                        # Przeliczamy wartości na podstawie podanej wagi
+                        ratio = amount / 100.0 if unit in ["g", "ml"] else amount
+                        # Jeśli to sztuki/łyżki, AI w kroku 100g powinno podać wartości na jednostkę, 
+                        # ale dla bezpieczeństwa przyjmijmy prosty przelicznik:
+                        
+                        st.session_state.current_ingredients.append({
+                            'name': f"{amount}{unit} {p['name']}",
+                            'weight': amount,
+                            'kcal': p['kcal'] * ratio,
+                            'protein': p['protein'] * ratio,
+                            'carbs': p['carbs'] * ratio,
+                            'fat': p['fat'] * ratio
+                        })
+                        # Resetujemy stan po dodaniu
+                        st.session_state.scan_step = "IDLE"
+                        st.session_state.temp_product = None
+                        st.rerun()
+
+                if st.button("🔄 Spróbuj skanować jeszcze raz"):
                     st.session_state.temp_product = None
-                    st.session_state.scan_active = True
+                    st.session_state.scan_step = "SCANNING"
                     st.rerun()
 
             st.markdown("---")
-            # Tradycyjne wpisywanie ręczne
-            ing_name = st.text_input("Składnik (wpisz ręcznie)")
-            c_w, c_u = st.columns([1, 1])
-            ing_weight = c_w.number_input("Ilość", min_value=0.0, value=100.0, key="manual_w")
-            ing_unit = c_u.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka", "porcja"], key="manual_u")
-            
-            if st.button("➕ Dodaj składnik"):
-                if ing_name and ing_weight > 0:
-                    with st.spinner("🤖 Liczenie..."):
+            # Tradycyjne wpisywanie ręczne (zawsze dostępne jako backup)
+            with st.expander("Wpisz ręcznie (bez skanowania)"):
+                ing_name = st.text_input("Nazwa składnika")
+                c_w, c_u = st.columns([1, 1])
+                ing_weight = c_w.number_input("Ilość", min_value=0.0, value=100.0)
+                ing_unit = c_u.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka"])
+                
+                if st.button("➕ Dodaj ręcznie"):
+                    if ing_name:
                         data = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
                         st.session_state.current_ingredients.append({
-                            'name': f"{ing_weight}{ing_unit} {ing_name}", 'weight': ing_weight, 
-                            'kcal': data['kcal'], 'protein': data['protein'], 'carbs': data['carbs'], 'fat': data['fat']
+                            'name': f"{ing_weight}{ing_unit} {ing_name}", 
+                            'weight': ing_weight, 
+                            'kcal': data['kcal'], 'protein': data['protein'], 
+                            'carbs': data['carbs'], 'fat': data['fat']
                         })
                         st.rerun()
 
         with col_list:
-            total_kcal = sum(float(i.get('kcal', 0)) for i in st.session_state.current_ingredients)
-            st.subheader(f"Razem: {total_kcal:.0f} kcal")
-            for i in st.session_state.current_ingredients:
-                st.text(f"• {i['name']} (~{i['kcal']:.0f} kcal)")
+            total_kcal = sum(i['kcal'] for i in st.session_state.current_ingredients)
+            st.subheader(f"Podsumowanie: {total_kcal:.0f} kcal")
             
-            if st.button("✅ Zapisz posiłek"):
-                db = SessionLocal()
-                db.add(MealLog(calories=total_kcal, date=datetime.now(), 
-                               protein_g=sum(i['protein'] for i in st.session_state.current_ingredients),
-                               carbs_g=sum(i['carbs'] for i in st.session_state.current_ingredients),
-                               fat_g=sum(i['fat'] for i in st.session_state.current_ingredients)))
-                db.commit()
-                db.close()
-                st.session_state.current_ingredients = []
-                get_dashboard_data.clear()
-                st.success("Zapisano!")
-                st.rerun()
+            # Wyświetlanie listy z przyciskiem usuwania
+            for idx, item in enumerate(st.session_state.current_ingredients):
+                c1, c2 = st.columns([4, 1])
+                c1.text(f"• {item['name']} ({item['kcal']:.0f} kcal)")
+                if c2.button("🗑️", key=f"del_{idx}"):
+                    st.session_state.current_ingredients.pop(idx)
+                    st.rerun()
+            
+            if st.session_state.current_ingredients:
+                if st.button("💾 ZAPISZ CAŁY POSIŁEK", type="primary"):
+                    db = SessionLocal()
+                    db.add(MealLog(
+                        calories=total_kcal,
+                        date=datetime.now(), 
+                        protein_g=sum(i['protein'] for i in st.session_state.current_ingredients),
+                        carbs_g=sum(i['carbs'] for i in st.session_state.current_ingredients),
+                        fat_g=sum(i['fat'] for i in st.session_state.current_ingredients)
+                    ))
+                    db.commit()
+                    db.close()
+                    st.session_state.current_ingredients = []
+                    get_dashboard_data.clear()
+                    st.success("Posiłek zapisany w dzienniku!")
+                    st.rerun()
 
     else:
         # Logika zamrażarki (bez zmian)
