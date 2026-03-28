@@ -506,7 +506,7 @@ elif choice == "🍳 Nowy Posiłek":
             st.caption(f"B: {total_prot:.0f}g | W: {total_carbs:.0f}g | T: {total_fat:.0f}g")
             
             for i in st.session_state.current_ingredients:
-                st.text(f"• {i['name']}: {i['weight']} {i.get('unit', 'g')} (~{i['kcal']:.0f} kcal)")
+                st.text(f"• {i['name']}: {i['weight']} {i.get('unit', 'g')} (~{to_num(i.get('kcal', 0)):.0f} kcal)")
             
             if st.button("✅ Zapisz posiłek"):
                 db = SessionLocal()
