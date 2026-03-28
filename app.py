@@ -478,7 +478,8 @@ elif choice == "🍳 Nowy Posiłek":
                 if ing_name and ing_weight > 0:
                     with st.spinner("🤖 Liczenie..."):
                         # Wywołanie AI z uwzględnieniem jednostki
-                        kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
+                        data = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
+                        kcal, prot, carbs, fat = data.get('kcal', 0), data.get('protein', 0), data.get('carbs', 0), data.get('fat', 0)
                         display_name = f"{ing_weight}{ing_unit} {ing_name}" if ing_unit != "g" else ing_name
                         st.session_state.current_ingredients.append({
                             'name': display_name, 'weight': ing_weight, 
@@ -615,7 +616,8 @@ elif choice == "➕ Dodaj Batch":
                 if st.button("➕ Dodaj do garnka"):
                     if ing_weight > 0:
                         with st.spinner("Liczenie makro..."):
-                            kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight)
+                            data = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
+                            kcal, prot, carbs, fat = data.get('kcal', 0), data.get('protein', 0), data.get('carbs', 0), data.get('fat', 0)
                             db.add(BatchDraft(ingredient_name=ing_name, weight=ing_weight, kcal=kcal, protein=prot, carbs=carbs, fat=fat))
                             selected_item.weight_g -= ing_weight
                             db.commit()
@@ -649,7 +651,8 @@ elif choice == "➕ Dodaj Batch":
             if st.button("➕ Dodaj do garnka"):
                 if ing_name and ing_weight > 0:
                     with st.spinner("Liczenie makro..."):
-                        kcal, prot, carbs, fat = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
+                        data = get_nutrition_from_ai(ing_name, ing_weight)
+                        kcal, prot, carbs, fat = data.get('kcal', 0), data.get('protein', 0), data.get('carbs', 0), data.get('fat', 0)
                         display_name = f"{ing_weight}{ing_unit} {ing_name}" if ing_unit != "g" else ing_name
                         db.add(BatchDraft(ingredient_name=display_name, weight=ing_weight, kcal=kcal, protein=prot, carbs=carbs, fat=fat))
                         db.commit()
