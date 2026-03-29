@@ -848,6 +848,64 @@ elif choice == "➕ Dodaj Batch":
             
     db.close()
 
+elif choice == "📦 Zamrażarka":
+    st.header("📦 Zawartość Twojej Zamrażarki")
+    db = SessionLocal()
+    
+    # Pobieramy z bazy wszystkie potrawy, które mają wagę większą niż zero
+    batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
+
+    if not batches:
+        st.info("Twoja zamrażarka jest pusta. Przygotuj coś w sekcji '➕ Dodaj Batch'!")
+    else:
+        for batch in batches:
+            with st.container(border=True):
+                col_info, col_actions = st.columns([2, 1])
+                
+                with col_info:
+                    st.markdown(f"### {batch.name}")
+                    st.caption(f"Data przygotowania: {batch.date_prepared.strftime('%Y-%m-%d')}")
+                    st.write(f"**Zostało:** {batch.current_weight_g:.0f}g / {batch.original_weight_g:.0f}g")
+                    
+                    # Proporcjonalne wyliczenie makro na pozostałą wagę
+                    ratio = batch.current_weight_g / batch.original_weight_g
+                    rem_kcal = batch.total_calories * ratio
+                    rem_p = batch.total_protein * ratio
+                    rem_c = batch.total_carbs * ratio
+                    rem_f = batch.total_fat * ratio
+                    st.caption(f"Pozostałe wartości: {rem_kcal:.0f} kcal | B: {rem_p:.1f}g | W: {rem_c:.1f}g | T: {rem_f:.1f}g")
+
+                with col_actions:
+                    st.markdown("**Usuń wagę (bez dopisywania kcal):**")
+                    remove_weight = st.number_input(
+                        f"Ile gramów ubyło? ({batch.name})", 
+                        min_value=0.0, 
+                        max_value=float(batch.current_weight_g), 
+                        value=float(batch.current_weight_g),
+                        key=f"rem_val_{batch.id}"
+                    )
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("🗑️ Usuń", key=f"btn_rem_{batch.id}", use_container_width=True):
+                            if remove_weight > 0:
+                                batch.current_weight_g -= remove_weight
+                                # Jeśli zostanie śladowa ilość po odjęciu, usuwamy rekord
+                                if batch.current_weight_g <= 0.5:
+                                    db.delete(batch)
+                                db.commit()
+                                st.success(f"Zaktualizowano wagę potrawy!")
+                                get_dashboard_data.clear()
+                                st.rerun()
+                    with c2:
+                        if st.button("🗑️ Usuń całość", key=f"btn_rem_all_{batch.id}", type="primary", use_container_width=True):
+                            db.delete(batch)
+                            db.commit()
+                            st.success(f"Usunięto całą potrawę: {batch.name}!")
+                            get_dashboard_data.clear()
+                            st.rerun()
+    db.close()
+
 # --- 👟 AKTYWNOŚĆ ---
 elif choice == "👟 Aktywność":
     st.header("👟 Monitoring Aktywności")
