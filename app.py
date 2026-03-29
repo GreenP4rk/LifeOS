@@ -630,74 +630,222 @@ elif choice == "🍳 Nowy Posiłek":
                     st.rerun()
 
     else:
-        # Logika zamrażarki (bez zmian)
-        st.subheader("📦 Wybór z zapasów")
+        st.subheader("📦 Wybór z Twoich zapasów")
         db = SessionLocal()
         batches = db.query(MealBatch).filter(MealBatch.current_weight_g > 0).all()
-        for batch in batches:
-            col_info, col_actions = st.columns([2, 2])
-            with col_info: st.write(f"**{batch.name}** ({batch.current_weight_g:.0f}g)")
-            with col_actions:
-                eat_w = st.number_input(f"Gramy", min_value=0.0, max_value=float(batch.current_weight_g), key=f"e_{batch.id}")
-                if st.button("🍽️ Zjedz", key=f"b_{batch.id}"):
-                    ratio = eat_w / batch.original_weight_g
-                    db.add(MealLog(calories=batch.total_calories * ratio, 
-                                   date=datetime.now(),
-                                   protein_g=batch.total_protein * ratio if hasattr(batch, 'total_protein') else 0,
-                                   carbs_g=batch.total_carbs * ratio if hasattr(batch, 'total_carbs') else 0,
-                                   fat_g=batch.total_fat * ratio if hasattr(batch, 'total_fat') else 0))
-                    batch.current_weight_g -= eat_w
-                    db.commit()
-                    st.rerun()
+
+        if not batches:
+            st.info("Twoja zamrażarka jest pusta.")
+        else:
+            for batch in batches:
+                col_info, col_actions = st.columns([2, 2])
+                
+                with col_info:
+                    st.write(f"**{batch.name}**")
+                    st.caption(f"Zostało: {batch.current_weight_g:.0f}g / {batch.original_weight_g:.0f}g")
+
+                with col_actions:
+                    eat_weight = st.number_input(f"Ile g? ({batch.name})", min_value=0.0, max_value=float(batch.current_weight_g), key=f"eat_w_{batch.id}")
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if st.button("🍽️ Zjedz porcję", key=f"btn_eat_p_{batch.id}"):
+                            if eat_weight > 0:
+                                ratio = eat_weight / batch.original_weight_g
+                                eaten_kcal = batch.total_calories * ratio
+                                eaten_p = batch.total_protein * ratio
+                                eaten_c = batch.total_carbs * ratio
+                                eaten_f = batch.total_fat * ratio
+                                
+                                batch.current_weight_g -= eat_weight
+                                
+                                new_meal = MealLog(
+                                    calories=eaten_kcal, 
+                                    protein_g=eaten_p, carbs_g=eaten_c, fat_g=eaten_f, 
+                                    date=datetime.now()
+                                )
+                                db.add(new_meal)
+                                db.commit()
+                                st.success(f"Zapisano: {eaten_kcal:.0f} kcal")
+                                get_dashboard_data.clear()
+                                st.rerun()
+                    
+                    with c2:
+                        if st.button("🗑️ Zjedz całość", key=f"btn_all_{batch.id}"):
+                            ratio = batch.current_weight_g / batch.original_weight_g
+                            remaining_kcal = batch.total_calories * ratio
+                            remaining_p = batch.total_protein * ratio
+                            remaining_c = batch.total_carbs * ratio
+                            remaining_f = batch.total_fat * ratio
+                            
+                            full_meal = MealLog(
+                                calories=remaining_kcal, 
+                                protein_g=remaining_p, carbs_g=remaining_c, fat_g=remaining_f, 
+                                date=datetime.now()
+                            )
+                            db.add(full_meal)
+                            db.delete(batch)
+                            db.commit() 
+                            get_dashboard_data.clear()
+                            st.rerun()
+                st.divider()
         db.close()
 
+# --- ➕ DODAJ BATCH ---
 elif choice == "➕ Dodaj Batch":
     st.header("📦 Gotowanie na zapas")
+    
     db = SessionLocal()
     drafts = db.query(BatchDraft).all()
-    b_name = st.text_input("Nazwa potrawy")
+
+    b_name = st.text_input("Nazwa potrawy (np. Bigos)", placeholder="Wpisz nazwę...")
     
-    col_in, col_summary = st.columns(2)
+    col_in, col_summary = st.columns([1, 1])
+    
     with col_in:
-        # SKANOWANIE W BATCHU
-        if not st.session_state.scan_active and st.session_state.temp_product is None:
-            if st.button("📷 Skanuj składnik"):
-                st.session_state.scan_active = True
-                st.rerun()
-
-        if st.session_state.scan_active:
-            cap = st.camera_input("Zrób zdjęcie składnika")
-            if cap:
-                data = analyze_product_image(cap)
-                if data:
-                    st.session_state.temp_product = data
-                    st.session_state.scan_active = False
-                    st.rerun()
-
-        if st.session_state.temp_product:
-            p = st.session_state.temp_product
-            st.write(f"Produkt: {p['name']} (100g: {p['kcal']} kcal)")
-            with st.form("batch_scan_form"):
-                amount = st.number_input("Waga/Ilość", min_value=0.0)
-                unit = st.selectbox("Jednostka", ["g", "ml", "sztuka"])
-                if st.form_submit_button("Dodaj do garnka"):
-                    final = get_nutrition_from_ai(p['name'], amount, unit)
-                    db.add(BatchDraft(ingredient_name=f"{amount}{unit} {p['name']}", weight=amount, 
-                                      kcal=final['kcal'], protein=final['protein'], carbs=final['carbs'], fat=final['fat']))
-                    db.commit()
+        st.markdown("### 🛒 Dodaj składnik")
+        
+        source_type = st.radio("Źródło składnika", ["Z zewnątrz (sklep/ręcznie)", "Ze spiżarni"], horizontal=True)
+        
+        if source_type == "Ze spiżarni":
+            available_items = db.query(PantryItem).filter(PantryItem.weight_g > 0).all()
+            if available_items:
+                item_options = {f"{i.name} (Zostało: {i.weight_g}g)": i for i in available_items}
+                selected_label = st.selectbox("Wybierz produkt", list(item_options.keys()))
+                selected_item = item_options[selected_label]
+                
+                ing_name = selected_item.name
+                ing_weight = st.number_input("Ile gramów bierzesz?", min_value=0.0, max_value=float(selected_item.weight_g), key="pantry_w")
+                
+                if st.button("➕ Dodaj do garnka"):
+                    if ing_weight > 0:
+                        with st.spinner("Liczenie makro..."):
+                            data = get_nutrition_from_ai(ing_name, ing_weight, unit="g")
+                            kcal, prot, carbs, fat = data.get('kcal', 0), data.get('protein', 0), data.get('carbs', 0), data.get('fat', 0)
+                            db.add(BatchDraft(ingredient_name=ing_name, weight=ing_weight, kcal=kcal, protein=prot, carbs=carbs, fat=fat))
+                            selected_item.weight_g -= ing_weight
+                            db.commit()
+                            st.rerun()
+            else:
+                st.warning("Brak produktów w spiżarni!")
+                
+        else:
+            # --- MASZYNA STANÓW SKANOWANIA W BATCHU ---
+            if st.session_state.scan_step == "IDLE":
+                if st.button("📷 Skanuj składnik"):
+                    st.session_state.scan_step = "SCANNING"
                     st.session_state.temp_product = None
                     st.rerun()
 
+            elif st.session_state.scan_step == "SCANNING":
+                cap_batch = st.camera_input("Zrób zdjęcie", key="cam_batch")
+                if cap_batch:
+                    with st.spinner("🤖 Rozpoznawanie..."):
+                        data = analyze_product_image(cap_batch)
+                        if data:
+                            st.session_state.temp_product = data
+                            st.session_state.scan_step = "VERIFYING"
+                            st.rerun()
+                if st.button("❌ Anuluj skanowanie"):
+                    st.session_state.scan_step = "IDLE"
+                    st.session_state.temp_product = None
+                    st.rerun()
+
+            elif st.session_state.scan_step == "VERIFYING":
+                p = st.session_state.temp_product
+                st.success(f"Rozpoznano: {p['name']} (100g: {p['kcal']} kcal)")
+                
+                with st.form("batch_scan_form"):
+                    amount = st.number_input("Waga/Ilość", min_value=0.0)
+                    unit = st.selectbox("Jednostka", ["g", "ml", "sztuka"])
+                    
+                    if st.form_submit_button("Dodaj do garnka"):
+                        ratio = amount / 100.0 if unit in ["g", "ml"] else amount
+                        db.add(BatchDraft(
+                            ingredient_name=f"{amount}{unit} {p['name']}", 
+                            weight=amount, 
+                            kcal=p['kcal'] * ratio, 
+                            protein=p['protein'] * ratio, 
+                            carbs=p['carbs'] * ratio, 
+                            fat=p['fat'] * ratio
+                        ))
+                        db.commit()
+                        st.session_state.scan_step = "IDLE"
+                        st.session_state.temp_product = None
+                        st.rerun()
+                
+                if st.button("🔄 Skanuj ponownie"):
+                    st.session_state.temp_product = None
+                    st.session_state.scan_step = "SCANNING"
+                    st.rerun()
+
+            st.markdown("---")
+            with st.expander("Wpisz ręcznie (bez skanowania)"):
+                ing_name = st.text_input("Nazwa składnika", key="batch_ing_n")
+                c_w_b, c_u_b = st.columns([1, 1])
+                ing_weight = c_w_b.number_input("Ilość", min_value=0.0, key="batch_ing_w")
+                ing_unit = c_u_b.selectbox("Jednostka", ["g", "ml", "sztuka", "łyżka", "łyżeczka", "szklanka", "opakowanie"], key="batch_ing_u")
+                
+                if st.button("➕ Dodaj do garnka ręcznie"):
+                    if ing_name and ing_weight > 0:
+                        with st.spinner("Liczenie makro..."):
+                            data = get_nutrition_from_ai(ing_name, ing_weight, unit=ing_unit)
+                            kcal, prot, carbs, fat = data.get('kcal', 0), data.get('protein', 0), data.get('carbs', 0), data.get('fat', 0)
+                            display_name = f"{ing_weight}{ing_unit} {ing_name}" if ing_unit != "g" else ing_name
+                            db.add(BatchDraft(ingredient_name=display_name, weight=ing_weight, kcal=kcal, protein=prot, carbs=carbs, fat=fat))
+                            db.commit()
+                            st.rerun()
+    
     with col_summary:
-        st.subheader("Zawartość garnka")
-        for d in drafts: st.text(f"• {d.ingredient_name} ({d.kcal:.0f} kcal)")
-        if st.button("💾 ZAPISZ BATCH"):
+        st.markdown("### 🥘 Zawartość garnka")
+        
+        if not drafts:
+            st.info("Twój garnek jest pusty.")
+        else:
             total_w = sum(d.weight for d in drafts)
-            db.add(MealBatch(name=b_name, original_weight_g=total_w, current_weight_g=total_w,
-                             total_calories=sum(d.kcal for d in drafts), date_prepared=datetime.now()))
+            total_k = sum(d.kcal for d in drafts)
+            total_p = sum(d.protein for d in drafts)
+            total_c = sum(d.carbs for d in drafts)
+            total_f = sum(d.fat for d in drafts)
+            
+            for d in drafts:
+                c1, c2 = st.columns([4, 1])
+                c1.text(f"• {d.ingredient_name} ({d.weight}g)")
+                if c2.button("❌", key=f"del_draft_{d.id}"):
+                    db.delete(d)
+                    db.commit()
+                    st.rerun()
+            
+            st.divider()
+            st.write(f"**Waga całkowita:** {total_w:.0f} g")
+            st.write(f"**Makro:** {total_k:.0f} kcal | B: {total_p:.0f}g | W: {total_c:.0f}g | T: {total_f:.0f}g")
+            
+            if st.button("💾 ZAPISZ I ZAMROŹ"):
+                if b_name and total_w > 0:
+                    db.add(MealBatch(
+                        name=b_name, 
+                        original_weight_g=total_w, 
+                        current_weight_g=total_w, 
+                        total_calories=total_k,
+                        total_protein=total_p,
+                        total_carbs=total_c,
+                        total_fat=total_f,
+                        date_prepared=datetime.now()
+                    ))
+                    db.query(BatchDraft).delete()
+                    db.commit()
+                    st.success(f"Danie '{b_name}' zapisane!")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error("Podaj nazwę potrawy!")
+
+    if drafts:
+        if st.sidebar.button("🗑️ WYCZYŚĆ CAŁY GARNEK"):
             db.query(BatchDraft).delete()
             db.commit()
             st.rerun()
+            
     db.close()
 
 # --- 👟 AKTYWNOŚĆ ---
